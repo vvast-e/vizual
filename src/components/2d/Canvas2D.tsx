@@ -3,6 +3,7 @@ import { useCanvas2D } from '@/hooks/useCanvas2D'
 import { useExport } from '@/hooks/useExport'
 import { useVisualizerStore } from '@/store/useVisualizerStore'
 import { useMaterialStore } from '@/store/useMaterialStore'
+import { useUIStore } from '@/store/useUIStore'
 import { PhotoUploader } from './PhotoUploader'
 import { MaskEditor } from './MaskEditor'
 import { defaultExportFilename } from '@/lib/export-utils'
@@ -23,6 +24,8 @@ export function Canvas2D({
 
   const [brushSize, setBrushSizeState] = useState(20)
   const selectedMaterial = useMaterialStore((s) => s.selectedMaterial)
+  const maskTool = useUIStore((s) => s.maskTool)
+  const setMaskTool = useUIStore((s) => s.setMaskTool)
 
   const {
     isReady,
@@ -35,6 +38,8 @@ export function Canvas2D({
     setBrushSize,
     clearMask,
     applyTexture,
+    finishLasso,
+    clearMaskToolState,
   } = useCanvas2D({
     canvasRef,
     containerWidth: width,
@@ -52,6 +57,10 @@ export function Canvas2D({
   )
 
   useEffect(() => {
+    setDrawingMode(maskTool === 'brush')
+  }, [maskTool, setDrawingMode])
+
+  useEffect(() => {
     if (photoDataUrl && isReady) {
       loadPhotoFromDataUrl(photoDataUrl)
     }
@@ -65,7 +74,11 @@ export function Canvas2D({
   const handleApplyTexture = useCallback(async () => {
     const url = selectedMaterial?.texture.url
     if (!url) return
-    await applyTexture(url, 'repeat')
+    try {
+      await applyTexture(url, 'repeat')
+    } catch (err) {
+      console.error('Не удалось наложить текстуру:', url, err)
+    }
   }, [selectedMaterial?.texture.url, applyTexture])
 
   return (
@@ -93,6 +106,10 @@ export function Canvas2D({
             brushSize={brushSize}
             onBrushSizeChange={handleBrushSizeChange}
             onClearMask={clearMask}
+            maskTool={maskTool}
+            onMaskToolChange={setMaskTool}
+            onClearMaskToolState={clearMaskToolState}
+            onFinishLasso={finishLasso}
           />
           <div className="flex flex-wrap items-center gap-2">
             <button
@@ -118,7 +135,9 @@ export function Canvas2D({
               Очистить
             </button>
           </div>
-          <p className="text-xs text-gray-500">Колёсико — зум, перетаскивание — панорама. Включите кисть и рисуйте область для текстуры.</p>
+          <p className="text-xs text-gray-500">
+            Колёсико — зум. Кисть — рисуйте область. Прямоугольник — выделите рамкой. Лассо — кликайте по точкам, затем «Завершить лассо». Без инструмента — перетаскивание панорамы.
+          </p>
         </>
       )}
     </div>

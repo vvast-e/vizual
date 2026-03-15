@@ -107,27 +107,31 @@ export async function applyPatternToCanvas(
   canvas: Canvas,
   textureUrl: string,
   repeat: 'repeat' | 'repeat-x' | 'repeat-y' = 'repeat',
-  clipPath?: FabricObject
+  clipPath?: FabricObject,
+  sceneBounds?: { left: number; top: number; width: number; height: number }
 ): Promise<void> {
   const patternCanvas = await getPatternCanvas(textureUrl, repeat)
-  const w = canvas.width ?? 0
-  const h = canvas.height ?? 0
+  const w = sceneBounds?.width ?? (canvas.width ?? 0)
+  const h = sceneBounds?.height ?? (canvas.height ?? 0)
   const pattern = new Pattern({
     source: patternCanvas,
     repeat,
+    patternTransform: [0.25, 0, 0, 0.25, 0, 0],
   })
   const rect = new Rect({
     width: w,
     height: h,
-    left: 0,
-    top: 0,
+    left: sceneBounds?.left ?? 0,
+    top: sceneBounds?.top ?? 0,
     fill: pattern,
+    opacity: 0.85,
+    originX: 'left',
+    originY: 'top',
     selectable: false,
     evented: false,
     clipPath: clipPath ?? undefined,
   })
   canvas.add(rect)
-  canvas.sendObjectToBack(rect)
   canvas.requestRenderAll()
 }
 

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useCallback, useState } from 'react'
-import { Canvas, FabricImage, Point, PencilBrush, Group } from 'fabric'
+import { Canvas, FabricImage, Point, PencilBrush, Group, Rect, Path } from 'fabric'
 import type { FabricObject } from 'fabric'
 import { useVisualizerStore } from '@/store/useVisualizerStore'
+import { useUIStore } from '@/store/useUIStore'
 import { constrainDimensions } from '@/lib/canvas-utils'
 import { MAX_PHOTO_SIZE_BYTES, ALLOWED_IMAGE_TYPES } from '@/lib/constants'
 
@@ -10,11 +11,8 @@ const MAX_ZOOM = 5
 const ZOOM_STEP = 0.1
 
 export interface UseCanvas2DOptions {
-  /** Ref на DOM canvas элемент */
   canvasRef: React.RefObject<HTMLCanvasElement | null>
-  /** Ширина контейнера (для setDimensions) */
   containerWidth?: number
-  /** Высота контейнера */
   containerHeight?: number
 }
 
@@ -28,8 +26,17 @@ export function useCanvas2D({
   const [drawingMode, setDrawingModeState] = useState(false)
   const panStartRef = useRef<{ x: number; y: number; vpt: [number, number, number, number, number, number] } | null>(null)
   const MASK_DATA_KEY = 'isMask'
+  const backgroundImageRef = useRef<FabricImage | null>(null)
 
+  const maskTool = useUIStore((s) => s.maskTool)
+  const maskToolRef = useRef(maskTool)
+  maskToolRef.current = maskTool
   const setPhotoDataUrl = useVisualizerStore((s) => s.setPhotoDataUrl)
+
+  const rectStartRef = useRef<{ x: number; y: number } | null>(null)
+  const rectPreviewRef = useRef<Rect | null>(null)
+  const lassoPointsRef = useRef<{ x: number; y: number }[]>([])
+  const lassoPreviewRef = useRef<Path | null>(null)
 
   const initCanvas = useCallback(() => {
     const el = canvasRef.current
@@ -55,18 +62,97 @@ export function useCanvas2D({
       canvas.zoomToPoint(point, zoom)
     })
 
+    const removeRectPreview = () => {
+      const prev = rectPreviewRef.current
+      if (prev) {
+        canvas.remove(prev)
+        rectPreviewRef.current = null
+      }
+      rectStartRef.current = null
+    }
+
     canvas.on('mouse:down', (opt) => {
-      if (canvas.isDrawingMode) return
-      const point = canvas.getViewportPoint(opt.e as MouseEvent)
+      const tool = maskToolRef.current
+      const scenePoint = canvas.getScenePoint(opt.e as MouseEvent)
+      const viewportPoint = canvas.getViewportPoint(opt.e as MouseEvent)
+
+      if (tool === 'rect') {
+        removeRectPreview()
+        rectStartRef.current = { x: scenePoint.x, y: scenePoint.y }
+        return
+      }
+      if (tool === 'lasso') {
+        lassoPointsRef.current.push({ x: scenePoint.x, y: scenePoint.y })
+        return
+      }
+      if (tool === 'brush' || canvas.isDrawingMode) return
+      if (tool !== null) return
+
+      const target = (opt as unknown as { target?: FabricObject | null }).target ?? null
+      if (target && target !== backgroundImageRef.current) {
+        return
+      }
+
       panStartRef.current = {
-        x: point.x,
-        y: point.y,
+        x: viewportPoint.x,
+        y: viewportPoint.y,
         vpt: [...canvas.viewportTransform] as [number, number, number, number, number, number],
       }
     })
 
     canvas.on('mouse:move', (opt) => {
-      if (canvas.isDrawingMode || !panStartRef.current) return
+      const tool = maskToolRef.current
+      const scenePoint = canvas.getScenePoint(opt.e as MouseEvent)
+
+      if (tool === 'rect' && rectStartRef.current) {
+        const center = rectStartRef.current
+        const halfWidth = Math.abs(scenePoint.x - center.x)
+        const halfHeight = Math.abs(scenePoint.y - center.y)
+        const width = Math.max(halfWidth * 2, 1)
+        const height = Math.max(halfHeight * 2, 1)
+        const left = center.x - width / 2
+        const top = center.y - height / 2
+        if (rectPreviewRef.current) canvas.remove(rectPreviewRef.current)
+        const preview = new Rect({
+          left,
+          top,
+          width,
+          height,
+          fill: 'rgba(0,0,0,0.4)',
+          stroke: '#333',
+          strokeWidth: 1,
+          originX: 'left',
+          originY: 'top',
+          selectable: false,
+          evented: false,
+        })
+        canvas.add(preview)
+        rectPreviewRef.current = preview
+        canvas.requestRenderAll()
+        return
+      }
+
+      if (tool === 'lasso' && lassoPointsRef.current.length > 0) {
+        const points = lassoPointsRef.current
+        if (lassoPreviewRef.current) canvas.remove(lassoPreviewRef.current)
+        const segments = points.map((p, i) => (i === 0 ? `M ${p.x} ${p.y}` : `L ${p.x} ${p.y}`))
+        segments.push(`L ${scenePoint.x} ${scenePoint.y}`)
+        const d = segments.join(' ')
+        const preview = new Path(d, {
+          stroke: '#333',
+          strokeWidth: 2,
+          strokeDashArray: [6, 4],
+          fill: 'rgba(0,0,0,0.15)',
+          selectable: false,
+          evented: false,
+        })
+        canvas.add(preview)
+        lassoPreviewRef.current = preview
+        canvas.requestRenderAll()
+        return
+      }
+
+      if (tool !== null || !panStartRef.current) return
       const point = canvas.getViewportPoint(opt.e as MouseEvent)
       const vpt: [number, number, number, number, number, number] = [
         panStartRef.current.vpt[0],
@@ -77,9 +163,42 @@ export function useCanvas2D({
         panStartRef.current.vpt[5] + point.y - panStartRef.current.y,
       ]
       canvas.viewportTransform = vpt
+      canvas.requestRenderAll()
     })
 
-    canvas.on('mouse:up', () => {
+    canvas.on('mouse:up', (opt) => {
+      const tool = maskToolRef.current
+      if (tool === 'rect' && rectStartRef.current) {
+        const scenePoint = canvas.getScenePoint(opt.e as MouseEvent)
+        const center = rectStartRef.current
+        const halfWidth = Math.abs(scenePoint.x - center.x)
+        const halfHeight = Math.abs(scenePoint.y - center.y)
+        const width = halfWidth * 2
+        const height = halfHeight * 2
+        if (width >= 2 && height >= 2) {
+          const left = center.x - width / 2
+          const top = center.y - height / 2
+          const rect = new Rect({
+            left,
+            top,
+            width,
+            height,
+            fill: 'black',
+            originX: 'left',
+            originY: 'top',
+            selectable: false,
+            evented: false,
+          })
+          ;(rect as unknown as { set: (o: Record<string, unknown>) => void }).set({
+            data: { [MASK_DATA_KEY]: true },
+          })
+          canvas.add(rect)
+        }
+        removeRectPreview()
+        canvas.requestRenderAll()
+        panStartRef.current = null
+        return
+      }
       panStartRef.current = null
     })
 
@@ -94,6 +213,29 @@ export function useCanvas2D({
     setIsReady(true)
     return canvas
   }, [canvasRef, containerWidth, containerHeight])
+
+  const finishLasso = useCallback(() => {
+    const canvas = canvasInstanceRef.current
+    if (!canvas) return
+    const points = lassoPointsRef.current
+    if (points.length < 3) return
+    if (lassoPreviewRef.current) {
+      canvas.remove(lassoPreviewRef.current)
+      lassoPreviewRef.current = null
+    }
+    const d = points.map((p, i) => (i === 0 ? `M ${p.x} ${p.y}` : `L ${p.x} ${p.y}`)).join(' ') + ' Z'
+    const path = new Path(d, {
+      fill: 'black',
+      selectable: false,
+      evented: false,
+    })
+    ;(path as unknown as { set: (o: Record<string, unknown>) => void }).set({
+      data: { [MASK_DATA_KEY]: true },
+    })
+    canvas.add(path)
+    lassoPointsRef.current = []
+    canvas.requestRenderAll()
+  }, [])
 
   useEffect(() => {
     const canvas = initCanvas()
@@ -110,10 +252,18 @@ export function useCanvas2D({
     try {
       const img = await FabricImage.fromURL(dataUrl)
       const dims = constrainDimensions(img.width ?? 0, img.height ?? 0)
-      img.set({ scaleX: dims.width / (img.width ?? 1), scaleY: dims.height / (img.height ?? 1) })
+      img.set({
+        scaleX: dims.width / (img.width ?? 1),
+        scaleY: dims.height / (img.height ?? 1),
+        selectable: false,
+      })
+      ;(img as unknown as { set: (o: Record<string, unknown>) => void }).set({
+        data: { isBackground: true },
+      })
       canvas.clear()
       canvas.add(img)
       canvas.renderAll()
+      backgroundImageRef.current = img
       setPhotoDataUrl(dataUrl)
     } catch {
       // ignore load error
@@ -147,6 +297,7 @@ export function useCanvas2D({
     canvas.setZoom(1)
     canvas.viewportTransform = [1, 0, 0, 1, 0, 0]
     canvas.renderAll()
+    backgroundImageRef.current = null
     setPhotoDataUrl(null)
   }, [setPhotoDataUrl])
 
@@ -199,10 +350,36 @@ export function useCanvas2D({
         const clones = await Promise.all(maskObjs.map((o) => o.clone()))
         clipPath = new Group(clones)
       }
-      await applyPatternToCanvas(canvas, textureUrl, repeat, clipPath)
+      let sceneBounds: { left: number; top: number; width: number; height: number } | undefined
+      const bg = backgroundImageRef.current
+      if (bg && typeof (bg as unknown as { getBoundingRect?: () => { left: number; top: number; width: number; height: number } }).getBoundingRect === 'function') {
+        const rect = (bg as unknown as { getBoundingRect: () => { left: number; top: number; width: number; height: number } }).getBoundingRect()
+        sceneBounds = {
+          left: rect.left,
+          top: rect.top,
+          width: rect.width,
+          height: rect.height,
+        }
+      }
+      await applyPatternToCanvas(canvas, textureUrl, repeat, clipPath, sceneBounds)
     },
     [getMaskObjects]
   )
+
+  const clearMaskToolState = useCallback(() => {
+    const canvas = canvasInstanceRef.current
+    if (rectPreviewRef.current && canvas) {
+      canvas.remove(rectPreviewRef.current)
+      rectPreviewRef.current = null
+    }
+    rectStartRef.current = null
+    if (lassoPreviewRef.current && canvas) {
+      canvas.remove(lassoPreviewRef.current)
+      lassoPreviewRef.current = null
+    }
+    lassoPointsRef.current = []
+    canvas?.requestRenderAll()
+  }, [])
 
   return {
     canvasInstanceRef,
@@ -217,5 +394,7 @@ export function useCanvas2D({
     clearMask,
     getMaskObjects,
     applyTexture,
+    finishLasso,
+    clearMaskToolState,
   }
 }
