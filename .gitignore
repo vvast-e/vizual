@@ -1,3 +1,45 @@
+# Node / Vite / React
+node_modules/
+dist/
+build/
+.vite/
+
+# TypeScript
+*.tsbuildinfo
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+logs/
+*.log
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python (backend)
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+# Environment / secrets
+.env
+.env.*
+
+# Cursor / tooling artifacts
+.cursor/
+terminals/
+mcps/
+
 # Logs
 logs
 *.log

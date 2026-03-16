@@ -4,6 +4,8 @@ import { useExport } from '@/hooks/useExport'
 import { useVisualizerStore } from '@/store/useVisualizerStore'
 import { useMaterialStore } from '@/store/useMaterialStore'
 import { useUIStore } from '@/store/useUIStore'
+import { useWallStore } from '@/store/useWallStore'
+import { detectWalls } from '@/hooks/useWallDetection'
 import { PhotoUploader } from './PhotoUploader'
 import { MaskEditor } from './MaskEditor'
 import { defaultExportFilename } from '@/lib/export-utils'
@@ -27,6 +29,13 @@ export function Canvas2D({
   const maskTool = useUIStore((s) => s.maskTool)
   const setMaskTool = useUIStore((s) => s.setMaskTool)
 
+  const walls = useWallStore((s) => s.walls)
+  const wallImageSize = useWallStore((s) => s.wallImageSize)
+  const selectedWallId = useWallStore((s) => s.selectedWallId)
+  const isDetecting = useWallStore((s) => s.isDetecting)
+  const setWalls = useWallStore((s) => s.setWalls)
+  const setDetecting = useWallStore((s) => s.setDetecting)
+
   const {
     isReady,
     loadPhotoFromFile,
@@ -37,9 +46,16 @@ export function Canvas2D({
     setDrawingMode,
     setBrushSize,
     clearMask,
+    getBackgroundBounds,
+    setWallOverlays,
     applyTexture,
+    applyTextureToWall,
+    highlightSelectedWall,
     finishLasso,
     clearMaskToolState,
+    textureScale,
+    setTextureScale,
+    hasTextureLayer,
   } = useCanvas2D({
     canvasRef,
     containerWidth: width,
@@ -66,6 +82,18 @@ export function Canvas2D({
     }
   }, [photoDataUrl, isReady, loadPhotoFromDataUrl])
 
+  useEffect(() => {
+    if (isReady && walls.length > 0 && wallImageSize) {
+      setWallOverlays(walls, wallImageSize)
+    }
+  }, [isReady, walls, wallImageSize, setWallOverlays])
+
+  useEffect(() => {
+    if (isReady) {
+      highlightSelectedWall(selectedWallId)
+    }
+  }, [isReady, selectedWallId, highlightSelectedWall])
+
   const handleExport = useCallback(() => {
     const dataUrl = exportToPng()
     if (dataUrl) downloadPng(dataUrl, defaultExportFilename('visualizer'))
@@ -75,11 +103,35 @@ export function Canvas2D({
     const url = selectedMaterial?.texture.url
     if (!url) return
     try {
+      if (selectedWallId != null && walls.length > 0 && wallImageSize) {
+        const wall = walls.find((w) => w.id === selectedWallId)
+        const bounds = getBackgroundBounds()
+        if (wall && bounds && wall.corners.length >= 3) {
+          const scaleX = bounds.width / wallImageSize.width
+          const scaleY = bounds.height / wallImageSize.height
+          const scaledCorners = wall.corners.map(
+            (c): [number, number] => [bounds.left + c[0] * scaleX, bounds.top + c[1] * scaleY]
+          )
+          // Диагностика перспективы
+          // eslint-disable-next-line no-console
+          console.log('[WallTexture] selectedWallId:', selectedWallId)
+          // eslint-disable-next-line no-console
+          console.log('[WallTexture] wall.corners (image coords):', wall.corners)
+          // eslint-disable-next-line no-console
+          console.log('[WallTexture] image_size:', wallImageSize)
+          // eslint-disable-next-line no-console
+          console.log('[WallTexture] background bounds:', bounds)
+          // eslint-disable-next-line no-console
+          console.log('[WallTexture] scaledCorners (canvas coords):', scaledCorners)
+          await applyTextureToWall(url, scaledCorners)
+          return
+        }
+      }
       await applyTexture(url, 'repeat')
     } catch (err) {
       console.error('Не удалось наложить текстуру:', url, err)
     }
-  }, [selectedMaterial?.texture.url, applyTexture])
+  }, [selectedMaterial?.texture.url, selectedWallId, walls, wallImageSize, getBackgroundBounds, applyTexture, applyTextureToWall])
 
   return (
     <div className={`flex flex-col gap-2 ${className}`}>
@@ -94,7 +146,22 @@ export function Canvas2D({
         />
         {!photoDataUrl && (
           <div className="absolute inset-0 flex items-center justify-center p-4">
-            <PhotoUploader onFileSelect={loadPhotoFromFile} className="h-full min-h-[200px] w-full max-w-md" />
+            <PhotoUploader
+              onFileSelect={(file) => {
+                loadPhotoFromFile(file)
+                setDetecting(true)
+                detectWalls(file)
+                  .then((res) => setWalls(res.walls, res.image_size))
+                  .catch(() => {})
+                  .finally(() => setDetecting(false))
+              }}
+              className="h-full min-h-[200px] w-full max-w-md"
+            />
+          </div>
+        )}
+        {isDetecting && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/30 text-white">
+            Определение стен…
           </div>
         )}
       </div>
@@ -120,6 +187,26 @@ export function Canvas2D({
             >
               Наложить текстуру
             </button>
+            {hasTextureLayer && (
+              <div className="flex items-center gap-2">
+                <label className="text-sm text-gray-600" htmlFor="texture-scale">
+                  Масштаб текстуры:
+                </label>
+                <input
+                  id="texture-scale"
+                  type="range"
+                  min={5}
+                  max={100}
+                  value={Math.round(textureScale * 100)}
+                  onChange={(e) => setTextureScale(Number(e.target.value) / 100)}
+                  className="h-2 w-28 cursor-pointer accent-gray-800"
+                  aria-label="Масштаб текстуры"
+                />
+                <span className="text-xs text-gray-500 tabular-nums">
+                  {Math.round(textureScale * 100)}%
+                </span>
+              </div>
+            )}
             <button
               type="button"
               onClick={handleExport}
@@ -136,7 +223,7 @@ export function Canvas2D({
             </button>
           </div>
           <p className="text-xs text-gray-500">
-            Колёсико — зум. Кисть — рисуйте область. Прямоугольник — выделите рамкой. Лассо — кликайте по точкам, затем «Завершить лассо». Без инструмента — перетаскивание панорамы.
+            Колёсико — зум. Кисть — рисуйте область. Прямоугольник — выделите рамкой. Лассо — кликайте по точкам, затем «Завершить лассо». Кликните по маркеру стены, чтобы выбрать её для наложения текстуры.
           </p>
         </>
       )}
