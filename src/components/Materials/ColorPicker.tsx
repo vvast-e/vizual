@@ -29,7 +29,8 @@ export function ColorPicker({
 
   const handlePreset = (color: { hex: string; name?: string }) => {
     const c: Color = { hex: color.hex, name: color.name }
-    onChange ? onChange(c) : setSelectedColor(c)
+    if (onChange) onChange(c)
+    else setSelectedColor(c)
   }
 
   const handleInputColor = (e: React.ChangeEvent<HTMLInputElement>) => {

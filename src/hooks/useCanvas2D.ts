@@ -3,7 +3,8 @@ import { Canvas, FabricImage, Point, PencilBrush, Group, Rect, Path } from 'fabr
 import type { FabricObject } from 'fabric'
 import { useVisualizerStore } from '@/store/useVisualizerStore'
 import { useUIStore } from '@/store/useUIStore'
-import { constrainDimensions } from '@/lib/canvas-utils'
+import { useWallStore } from '@/store/useWallStore'
+import type { WallData } from '@/store/useWallStore'
 import { MAX_PHOTO_SIZE_BYTES, ALLOWED_IMAGE_TYPES } from '@/lib/constants'
 
 const MIN_ZOOM = 0.1
@@ -24,7 +25,6 @@ export function useCanvas2D({
   const canvasInstanceRef = useRef<Canvas | null>(null)
   const [isReady, setIsReady] = useState(false)
   const [drawingMode, setDrawingModeState] = useState(false)
-  const panStartRef = useRef<{ x: number; y: number; vpt: [number, number, number, number, number, number] } | null>(null)
   const MASK_DATA_KEY = 'isMask'
   const backgroundImageRef = useRef<FabricImage | null>(null)
 
@@ -38,14 +38,26 @@ export function useCanvas2D({
   const lassoPointsRef = useRef<{ x: number; y: number }[]>([])
   const lassoPreviewRef = useRef<Path | null>(null)
 
+  const [textureScale, setTextureScaleState] = useState(0.25)
+  const [hasTextureLayer, setHasTextureLayer] = useState(false)
+  const textureLayerRef = useRef<FabricObject | null>(null)
+  const wallOverlaysRef = useRef<FabricObject[]>([])
+  const wallDebugShapesRef = useRef<FabricObject[]>([])
+  const wallIdByObjectRef = useRef<WeakMap<FabricObject, number>>(new WeakMap())
+  const WALL_BUTTON_DATA_KEY = 'wallId'
+
   const initCanvas = useCallback(() => {
     const el = canvasRef.current
     if (!el) return null
     const canvas = new Canvas(el, {
       selection: false,
       preserveObjectStacking: true,
+      skipTargetFind: false,
     })
     canvas.setDimensions({ width: containerWidth, height: containerHeight })
+    canvas.defaultCursor = 'default'
+    canvas.hoverCursor = 'default'
+    canvas.moveCursor = 'default'
     canvas.setZoom(1)
     canvas.viewportTransform = [1, 0, 0, 1, 0, 0]
     const brush = new PencilBrush(canvas)
@@ -72,9 +84,29 @@ export function useCanvas2D({
     }
 
     canvas.on('mouse:down', (opt) => {
+      const target = (opt as unknown as { target?: FabricObject | null }).target
+      const data = target ? (target as unknown as { data?: Record<string, unknown> }).data : undefined
+      if (data && typeof data[WALL_BUTTON_DATA_KEY] === 'number') {
+        useWallStore.getState().selectWall(data[WALL_BUTTON_DATA_KEY] as number)
+        return
+      }
+
       const tool = maskToolRef.current
       const scenePoint = canvas.getScenePoint(opt.e as MouseEvent)
-      const viewportPoint = canvas.getViewportPoint(opt.e as MouseEvent)
+      const point = new Point(scenePoint.x, scenePoint.y)
+
+      if (!target && wallOverlaysRef.current.length > 0) {
+        for (let i = wallOverlaysRef.current.length - 1; i >= 0; i--) {
+          const obj = wallOverlaysRef.current[i]
+          if (typeof (obj as unknown as { containsPoint?: (p: Point) => boolean }).containsPoint === 'function' && (obj as unknown as { containsPoint: (p: Point) => boolean }).containsPoint(point)) {
+            const wallId = wallIdByObjectRef.current.get(obj)
+            if (wallId != null) {
+              useWallStore.getState().selectWall(wallId)
+              return
+            }
+          }
+        }
+      }
 
       if (tool === 'rect') {
         removeRectPreview()
@@ -88,15 +120,8 @@ export function useCanvas2D({
       if (tool === 'brush' || canvas.isDrawingMode) return
       if (tool !== null) return
 
-      const target = (opt as unknown as { target?: FabricObject | null }).target ?? null
       if (target && target !== backgroundImageRef.current) {
         return
-      }
-
-      panStartRef.current = {
-        x: viewportPoint.x,
-        y: viewportPoint.y,
-        vpt: [...canvas.viewportTransform] as [number, number, number, number, number, number],
       }
     })
 
@@ -151,19 +176,6 @@ export function useCanvas2D({
         canvas.requestRenderAll()
         return
       }
-
-      if (tool !== null || !panStartRef.current) return
-      const point = canvas.getViewportPoint(opt.e as MouseEvent)
-      const vpt: [number, number, number, number, number, number] = [
-        panStartRef.current.vpt[0],
-        panStartRef.current.vpt[1],
-        panStartRef.current.vpt[2],
-        panStartRef.current.vpt[3],
-        panStartRef.current.vpt[4] + point.x - panStartRef.current.x,
-        panStartRef.current.vpt[5] + point.y - panStartRef.current.y,
-      ]
-      canvas.viewportTransform = vpt
-      canvas.requestRenderAll()
     })
 
     canvas.on('mouse:up', (opt) => {
@@ -196,10 +208,8 @@ export function useCanvas2D({
         }
         removeRectPreview()
         canvas.requestRenderAll()
-        panStartRef.current = null
         return
       }
-      panStartRef.current = null
     })
 
     canvas.on('path:created', (opt) => {
@@ -251,11 +261,27 @@ export function useCanvas2D({
     if (!canvas) return
     try {
       const img = await FabricImage.fromURL(dataUrl)
-      const dims = constrainDimensions(img.width ?? 0, img.height ?? 0)
+      const imageW = img.width ?? 0
+      const imageH = img.height ?? 0
+      if (imageW <= 0 || imageH <= 0) return
+      const scale = Math.min(containerWidth / imageW, containerHeight / imageH)
+      const drawW = Math.max(1, Math.round(imageW * scale))
+      const drawH = Math.max(1, Math.round(imageH * scale))
       img.set({
-        scaleX: dims.width / (img.width ?? 1),
-        scaleY: dims.height / (img.height ?? 1),
+        scaleX: drawW / imageW,
+        scaleY: drawH / imageH,
+        left: (containerWidth - drawW) / 2,
+        top: (containerHeight - drawH) / 2,
+        originX: 'left',
+        originY: 'top',
         selectable: false,
+        evented: false,
+        lockMovementX: true,
+        lockMovementY: true,
+        lockScalingX: true,
+        lockScalingY: true,
+        lockRotation: true,
+        hoverCursor: 'default',
       })
       ;(img as unknown as { set: (o: Record<string, unknown>) => void }).set({
         data: { isBackground: true },
@@ -268,7 +294,7 @@ export function useCanvas2D({
     } catch {
       // ignore load error
     }
-  }, [setPhotoDataUrl])
+  }, [setPhotoDataUrl, containerWidth, containerHeight])
 
   const loadPhotoFromFile = useCallback(
     (file: File) => {
@@ -298,7 +324,12 @@ export function useCanvas2D({
     canvas.viewportTransform = [1, 0, 0, 1, 0, 0]
     canvas.renderAll()
     backgroundImageRef.current = null
+    textureLayerRef.current = null
+    wallOverlaysRef.current = []
+    wallDebugShapesRef.current = []
+    setHasTextureLayer(false)
     setPhotoDataUrl(null)
+    useWallStore.getState().setWalls([], null)
   }, [setPhotoDataUrl])
 
   const setDrawingMode = useCallback((enabled: boolean) => {
@@ -339,32 +370,200 @@ export function useCanvas2D({
     return canvas.getObjects().filter(hasMaskData)
   }, [hasMaskData])
 
-  const applyTexture = useCallback(
-    async (textureUrl: string, repeat: 'repeat' | 'repeat-x' | 'repeat-y' = 'repeat') => {
+  const getBackgroundBounds = useCallback((): { left: number; top: number; width: number; height: number } | null => {
+    const bg = backgroundImageRef.current
+    if (!bg || typeof (bg as unknown as { getBoundingRect?: () => { left: number; top: number; width: number; height: number } }).getBoundingRect !== 'function') return null
+    const rect = (bg as unknown as { getBoundingRect: () => { left: number; top: number; width: number; height: number } }).getBoundingRect()
+    return { left: rect.left, top: rect.top, width: rect.width, height: rect.height }
+  }, [])
+
+  const setWallOverlays = useCallback(
+    (walls: WallData[], wallImageSize: { width: number; height: number } | null) => {
       const canvas = canvasInstanceRef.current
       if (!canvas) return
+      // убрать старые фигуры стен
+      wallDebugShapesRef.current.forEach((obj) => canvas.remove(obj))
+      wallDebugShapesRef.current = []
+      wallOverlaysRef.current.forEach((obj) => canvas.remove(obj))
+      wallOverlaysRef.current = []
+      if (walls.length === 0 || !wallImageSize) {
+        canvas.requestRenderAll()
+        return
+      }
+      const bounds = getBackgroundBounds()
+      if (!bounds) return
+      const scaleX = bounds.width / wallImageSize.width
+      const scaleY = bounds.height / wallImageSize.height
+      for (const wall of walls) {
+        // многоугольник стены поверх фото, чтобы было видно реальную форму
+        if (wall.corners.length >= 3) {
+          const d =
+            wall.corners
+              .map((c, i) => {
+                const x = bounds.left + c[0] * scaleX
+                const y = bounds.top + c[1] * scaleY
+                return `${i === 0 ? 'M' : 'L'} ${x} ${y}`
+              })
+              .join(' ') + ' Z'
+          const shape = new Path(d, {
+            fill: 'rgba(59,130,246,0.12)', // полупрозрачный синий
+            stroke: 'rgba(37,99,235,0.8)',
+            strokeWidth: 2,
+            selectable: false,
+            evented: false,
+          })
+          canvas.add(shape)
+          wallDebugShapesRef.current.push(shape)
+        }
+
+        const cx = bounds.left + wall.center[0] * scaleX
+        const cy = bounds.top + wall.center[1] * scaleY
+        const btn = new Rect({
+          width: 36,
+          height: 22,
+          left: cx - 18,
+          top: cy - 11,
+          fill: 'white',
+          stroke: '#333',
+          strokeWidth: 1,
+          rx: 11,
+          ry: 11,
+          originX: 'left',
+          originY: 'top',
+          selectable: false,
+          evented: true,
+          hoverCursor: 'pointer',
+        })
+        ;(btn as unknown as { set: (o: Record<string, unknown>) => void }).set({
+          data: { [WALL_BUTTON_DATA_KEY]: wall.id },
+        })
+        wallIdByObjectRef.current.set(btn, wall.id)
+        canvas.add(btn)
+        wallOverlaysRef.current.push(btn)
+      }
+      canvas.requestRenderAll()
+    },
+    [getBackgroundBounds]
+  )
+
+  const applyTexture = useCallback(
+    async (
+      textureUrl: string,
+      repeat: 'repeat' | 'repeat-x' | 'repeat-y' = 'repeat',
+      options?: { clipPathOverride?: FabricObject }
+    ) => {
+      const canvas = canvasInstanceRef.current
+      if (!canvas) return
+      if (textureLayerRef.current) {
+        canvas.remove(textureLayerRef.current)
+        textureLayerRef.current = null
+      }
       const { applyPatternToCanvas } = await import('@/lib/texture-processor')
-      const maskObjs = getMaskObjects()
-      let clipPath: Group | undefined
-      if (maskObjs.length > 0) {
-        const clones = await Promise.all(maskObjs.map((o) => o.clone()))
-        clipPath = new Group(clones)
+      let clipPath: Group | FabricObject | undefined = options?.clipPathOverride
+      if (!clipPath) {
+        const maskObjs = getMaskObjects()
+        if (maskObjs.length > 0) {
+          const clones = await Promise.all(maskObjs.map((o) => o.clone()))
+          clipPath = new Group(clones)
+        }
       }
       let sceneBounds: { left: number; top: number; width: number; height: number } | undefined
       const bg = backgroundImageRef.current
       if (bg && typeof (bg as unknown as { getBoundingRect?: () => { left: number; top: number; width: number; height: number } }).getBoundingRect === 'function') {
         const rect = (bg as unknown as { getBoundingRect: () => { left: number; top: number; width: number; height: number } }).getBoundingRect()
-        sceneBounds = {
-          left: rect.left,
-          top: rect.top,
-          width: rect.width,
-          height: rect.height,
-        }
+        sceneBounds = { left: rect.left, top: rect.top, width: rect.width, height: rect.height }
       }
-      await applyPatternToCanvas(canvas, textureUrl, repeat, clipPath, sceneBounds)
+      const layer = await applyPatternToCanvas(
+        canvas,
+        textureUrl,
+        repeat,
+        clipPath,
+        sceneBounds,
+        textureScale
+      )
+      textureLayerRef.current = layer
+      setHasTextureLayer(true)
     },
-    [getMaskObjects]
+    [getMaskObjects, textureScale]
   )
+
+  const applyTextureToWall = useCallback(
+    async (textureUrl: string, wallCorners: [number, number][]) => {
+      const canvas = canvasInstanceRef.current;
+      if (!canvas) return;
+      if (textureLayerRef.current) {
+        canvas.remove(textureLayerRef.current);
+        textureLayerRef.current = null;
+      }
+      const { renderPerspectiveWallTexture } = await import('@/lib/texture-processor');
+      const width = canvas.getWidth() ?? containerWidth;
+      const height = canvas.getHeight() ?? containerHeight;
+      const { canvas: textureCanvas, offsetX, offsetY } = await renderPerspectiveWallTexture(
+        textureUrl,
+        wallCorners,
+        width,
+        height,
+        textureScale
+      );
+      const img = new Image();
+      img.src = textureCanvas.toDataURL();
+      await new Promise((resolve) => { img.onload = resolve; });
+      const fabricImg = new FabricImage(img, {
+        left: offsetX,
+        top: offsetY,
+        selectable: false,
+        evented: false,
+        opacity: 0.85,
+      });
+      // ClipPath по локальным координатам (localCorners)
+      const { localCorners } = await renderPerspectiveWallTexture(
+        textureUrl,
+        wallCorners,
+        width,
+        height,
+        textureScale
+      );
+      const clipPath = new Path(
+        localCorners
+          .map((p, i) => (i === 0 ? `M ${p[0]} ${p[1]}` : `L ${p[0]} ${p[1]}`))
+          .join(' ') + ' Z',
+        { selectable: false, evented: false }
+      );
+      fabricImg.set({ clipPath });
+      canvas.add(fabricImg);
+      textureLayerRef.current = fabricImg;
+      setHasTextureLayer(true);
+      canvas.requestRenderAll();
+    },
+    [containerWidth, containerHeight, textureScale]
+  )
+
+  const highlightSelectedWall = useCallback((selectedId: number | null) => {
+    const canvas = canvasInstanceRef.current
+    if (!canvas) return
+    for (const obj of wallOverlaysRef.current) {
+      const wallId = wallIdByObjectRef.current.get(obj)
+      if (wallId != null && wallId === selectedId) {
+        obj.set({ fill: '#3b82f6', stroke: '#1d4ed8' })
+      } else {
+        obj.set({ fill: 'white', stroke: '#333' })
+      }
+    }
+    canvas.requestRenderAll()
+  }, [])
+
+  const setTextureScale = useCallback((scale: number) => {
+    const s = Math.max(0.05, Math.min(1, scale))
+    setTextureScaleState(s)
+    const canvas = canvasInstanceRef.current
+    const layer = textureLayerRef.current
+    if (!canvas || !layer) return
+    const fill = (layer as unknown as { fill?: { patternTransform?: number[] } }).fill
+    if (fill && Array.isArray(fill.patternTransform)) {
+      fill.patternTransform = [s, 0, 0, s, 0, 0]
+      canvas.requestRenderAll()
+    }
+  }, [])
 
   const clearMaskToolState = useCallback(() => {
     const canvas = canvasInstanceRef.current
@@ -393,8 +592,15 @@ export function useCanvas2D({
     setBrushSize,
     clearMask,
     getMaskObjects,
+    getBackgroundBounds,
+    setWallOverlays,
     applyTexture,
+    applyTextureToWall,
+    highlightSelectedWall,
     finishLasso,
     clearMaskToolState,
+    textureScale,
+    setTextureScale,
+    hasTextureLayer,
   }
 }
