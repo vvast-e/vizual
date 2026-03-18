@@ -216,8 +216,9 @@ export function Canvas2D({
                         image_size: res.image_size,
                         hasMasks: Boolean(res.masks),
                         buildingBbox: res.debug?.building_bbox,
+                        wallsCount: res.walls?.length ?? 0,
                       })
-                      setWalls([], res.image_size)
+                      setWalls(res.walls ?? [], res.image_size)
                       setExteriorMaskOverlay(res.masks?.wall_minus_holes ?? null, res.image_size)
                     })
                     .catch((err) => {

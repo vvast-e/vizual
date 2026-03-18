@@ -6,6 +6,7 @@ export interface DetectWallsResponse {
 }
 
 export interface DetectExteriorResponse {
+  walls: WallData[]
   image_size: { width: number; height: number }
   masks: {
     wall: string
@@ -16,6 +17,7 @@ export interface DetectExteriorResponse {
     building_bbox: number[] | null
     windows_bboxes: number[][]
     doors_bboxes: number[][]
+    walls_count: number
   }
 }
 
