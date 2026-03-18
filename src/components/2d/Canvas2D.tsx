@@ -28,6 +28,8 @@ export function Canvas2D({
   const selectedMaterial = useMaterialStore((s) => s.selectedMaterial)
   const maskTool = useUIStore((s) => s.maskTool)
   const setMaskTool = useUIStore((s) => s.setMaskTool)
+  const hideWallMasks = useUIStore((s) => s.hideWallMasks)
+  const setHideWallMasks = useUIStore((s) => s.setHideWallMasks)
 
   const walls = useWallStore((s) => s.walls)
   const wallImageSize = useWallStore((s) => s.wallImageSize)
@@ -35,6 +37,8 @@ export function Canvas2D({
   const isDetecting = useWallStore((s) => s.isDetecting)
   const setWalls = useWallStore((s) => s.setWalls)
   const setDetecting = useWallStore((s) => s.setDetecting)
+  const setWallTexture = useWallStore((s) => s.setWallTexture)
+  const wallTextures = useWallStore((s) => s.wallTextures)
 
   const {
     isReady,
@@ -46,11 +50,11 @@ export function Canvas2D({
     setDrawingMode,
     setBrushSize,
     clearMask,
-    getBackgroundBounds,
     setWallOverlays,
     applyTexture,
     applyTextureToWall,
     highlightSelectedWall,
+    syncCornerHandles,
     finishLasso,
     clearMaskToolState,
     textureScale,
@@ -83,16 +87,33 @@ export function Canvas2D({
   }, [photoDataUrl, isReady, loadPhotoFromDataUrl])
 
   useEffect(() => {
+    // eslint-disable-next-line no-console
+    console.log('%c[Canvas2D] useEffect(setWallOverlays) FIRED', 'color:cyan;font-weight:bold', {
+      isReady,
+      wallsCount: walls.length,
+      wallImageSize,
+      wallTextures: JSON.parse(JSON.stringify(wallTextures)),
+      hideWallMasks,
+      setWallOverlaysRef: String(setWallOverlays).slice(0, 60),
+    })
     if (isReady && walls.length > 0 && wallImageSize) {
       setWallOverlays(walls, wallImageSize)
     }
-  }, [isReady, walls, wallImageSize, setWallOverlays])
+  }, [isReady, walls, wallImageSize, wallTextures, hideWallMasks, setWallOverlays])
 
   useEffect(() => {
     if (isReady) {
       highlightSelectedWall(selectedWallId)
     }
   }, [isReady, selectedWallId, highlightSelectedWall])
+
+  const editWallCorners = useUIStore((s) => s.editWallCorners)
+  const setEditWallCorners = useUIStore((s) => s.setEditWallCorners)
+
+  useEffect(() => {
+    if (!isReady) return
+    syncCornerHandles(selectedWallId)
+  }, [isReady, selectedWallId, editWallCorners, syncCornerHandles])
 
   const handleExport = useCallback(() => {
     const dataUrl = exportToPng()
@@ -102,28 +123,37 @@ export function Canvas2D({
   const handleApplyTexture = useCallback(async () => {
     const url = selectedMaterial?.texture.url
     if (!url) return
+    // eslint-disable-next-line no-console
+    console.log('%c[Canvas2D] handleApplyTexture START', 'color:lime;font-weight:bold', {
+      url,
+      selectedWallId,
+      wallsCount: walls.length,
+      wallImageSize,
+      currentWallTextures: JSON.parse(JSON.stringify(useWallStore.getState().wallTextures)),
+    })
     try {
       if (selectedWallId != null && walls.length > 0 && wallImageSize) {
         const wall = walls.find((w) => w.id === selectedWallId)
-        const bounds = getBackgroundBounds()
-        if (wall && bounds && wall.corners.length >= 3) {
-          const scaleX = bounds.width / wallImageSize.width
-          const scaleY = bounds.height / wallImageSize.height
-          const scaledCorners = wall.corners.map(
-            (c): [number, number] => [bounds.left + c[0] * scaleX, bounds.top + c[1] * scaleY]
-          )
-          // Диагностика перспективы
+        if (wall && wall.corners.length >= 3) {
           // eslint-disable-next-line no-console
-          console.log('[WallTexture] selectedWallId:', selectedWallId)
+          console.log('[Canvas2D] calling setWallTexture', { selectedWallId, url })
+          setWallTexture(selectedWallId, url)
           // eslint-disable-next-line no-console
-          console.log('[WallTexture] wall.corners (image coords):', wall.corners)
-          // eslint-disable-next-line no-console
-          console.log('[WallTexture] image_size:', wallImageSize)
-          // eslint-disable-next-line no-console
-          console.log('[WallTexture] background bounds:', bounds)
-          // eslint-disable-next-line no-console
-          console.log('[WallTexture] scaledCorners (canvas coords):', scaledCorners)
-          await applyTextureToWall(url, scaledCorners)
+          console.log('[Canvas2D] wallTextures AFTER setWallTexture:', JSON.parse(JSON.stringify(useWallStore.getState().wallTextures)))
+          try {
+            // eslint-disable-next-line no-console
+            console.log('[Canvas2D] calling applyTextureToWall...')
+            await applyTextureToWall(url, wall.corners, wallImageSize, selectedWallId)
+            // eslint-disable-next-line no-console
+            console.log('%c[Canvas2D] applyTextureToWall DONE', 'color:lime', {
+              wallTextures: JSON.parse(JSON.stringify(useWallStore.getState().wallTextures)),
+            })
+          } catch (e) {
+            // eslint-disable-next-line no-console
+            console.error('[Canvas2D] applyTextureToWall FAILED, reverting texture', e)
+            setWallTexture(selectedWallId, null)
+            throw e
+          }
           return
         }
       }
@@ -131,7 +161,7 @@ export function Canvas2D({
     } catch (err) {
       console.error('Не удалось наложить текстуру:', url, err)
     }
-  }, [selectedMaterial?.texture.url, selectedWallId, walls, wallImageSize, getBackgroundBounds, applyTexture, applyTextureToWall])
+  }, [selectedMaterial?.texture.url, selectedWallId, walls, wallImageSize, applyTexture, applyTextureToWall, setWallTexture])
 
   return (
     <div className={`flex flex-col gap-2 ${className}`}>
@@ -151,7 +181,15 @@ export function Canvas2D({
                 loadPhotoFromFile(file)
                 setDetecting(true)
                 detectWalls(file)
-                  .then((res) => setWalls(res.walls, res.image_size))
+                  .then((res) => {
+                    // eslint-disable-next-line no-console
+                    console.log('%c[Canvas2D] detectWalls RESULT -> setWalls', 'color:cyan;font-weight:bold', {
+                      wallsCount: res.walls?.length ?? 0,
+                      wallIds: Array.isArray(res.walls) ? res.walls.map((w) => w.id) : [],
+                      image_size: res.image_size,
+                    })
+                    setWalls(res.walls, res.image_size)
+                  })
                   .catch(() => {})
                   .finally(() => setDetecting(false))
               }}
@@ -186,6 +224,25 @@ export function Canvas2D({
               className="rounded bg-gray-800 px-3 py-1.5 text-sm text-white hover:bg-gray-700 disabled:opacity-50"
             >
               Наложить текстуру
+            </button>
+            <button
+              type="button"
+              onClick={() => setEditWallCorners(!editWallCorners)}
+              className={`rounded border px-3 py-1.5 text-sm ${
+                editWallCorners ? 'border-blue-700 bg-blue-50 text-blue-800' : 'border-gray-300 text-gray-700 hover:bg-gray-100'
+              }`}
+            >
+              Править углы
+            </button>
+            <button
+              type="button"
+              aria-pressed={hideWallMasks}
+              onClick={() => setHideWallMasks(!hideWallMasks)}
+              className={`rounded border px-3 py-1.5 text-sm ${
+                hideWallMasks ? 'border-blue-700 bg-blue-50 text-blue-800' : 'border-gray-300 text-gray-700 hover:bg-gray-100'
+              }`}
+            >
+              Скрыть маски
             </button>
             {hasTextureLayer && (
               <div className="flex items-center gap-2">
