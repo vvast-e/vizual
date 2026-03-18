@@ -64,5 +64,5 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
-
+*.ckpt
 warp-debug/
