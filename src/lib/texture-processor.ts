@@ -6,8 +6,7 @@
 import type { Canvas } from 'fabric'
 import type { FabricObject } from 'fabric'
 import { Rect, Pattern } from 'fabric'
-// @ts-expect-error — vendored ESM without type declarations
-import { Homography } from './homography-vendor.js'
+import Perspective from 'perspectivejs'
 
 const textureCache = new Map<string, HTMLImageElement>()
 
@@ -147,33 +146,54 @@ export async function applyPatternToCanvas(
   return rect
 }
 
-function createScaledTiledCanvas(
-  img: HTMLImageElement,
-  width: number,
-  height: number,
-  scale: number
-): HTMLCanvasElement {
-  const safeScale = Math.max(0.05, Math.min(1, scale))
-  const tileW = Math.max(1, Math.round(img.naturalWidth * safeScale))
-  const tileH = Math.max(1, Math.round(img.naturalHeight * safeScale))
+function drawTexturedTriangle(
+  ctx: CanvasRenderingContext2D,
+  src: CanvasImageSource,
+  sx0: number, sy0: number,
+  sx1: number, sy1: number,
+  sx2: number, sy2: number,
+  dx0: number, dy0: number,
+  dx1: number, dy1: number,
+  dx2: number, dy2: number
+): void {
+  ctx.save()
+  ctx.beginPath()
+  ctx.moveTo(dx0, dy0)
+  ctx.lineTo(dx1, dy1)
+  ctx.lineTo(dx2, dy2)
+  ctx.closePath()
+  ctx.clip()
 
+  const denom = (sx1 - sx0) * (sy2 - sy0) - (sx2 - sx0) * (sy1 - sy0)
+  if (Math.abs(denom) < 1e-6) { ctx.restore(); return }
+
+  const a = ((dx1 - dx0) * (sy2 - sy0) - (dx2 - dx0) * (sy1 - sy0)) / denom
+  const c = ((dx2 - dx0) * (sx1 - sx0) - (dx1 - dx0) * (sx2 - sx0)) / denom
+  const e = dx0 - a * sx0 - c * sy0
+  const b = ((dy1 - dy0) * (sy2 - sy0) - (dy2 - dy0) * (sy1 - sy0)) / denom
+  const d = ((dy2 - dy0) * (sx1 - sx0) - (dy1 - dy0) * (sx2 - sx0)) / denom
+  const f = dy0 - b * sx0 - d * sy0
+
+  ctx.setTransform(a, b, c, d, e, f)
+  ctx.drawImage(src, 0, 0)
+  ctx.restore()
+}
+
+function createTiledCanvas(img: HTMLImageElement, width: number, height: number): HTMLCanvasElement {
   const c = document.createElement('canvas')
   c.width = width
   c.height = height
-  const ctx = c.getContext('2d')
-  if (!ctx) return c
-
-  for (let y = 0; y < height; y += tileH) {
-    for (let x = 0; x < width; x += tileW) {
-      ctx.drawImage(img, x, y, tileW, tileH)
-    }
+  const ctx = c.getContext('2d')!
+  const pat = ctx.createPattern(img, 'repeat')
+  if (pat) {
+    ctx.fillStyle = pat
+    ctx.fillRect(0, 0, width, height)
   }
-
   return c
 }
 
 /**
- * Рендерит текстуру на четырёхугольник стены с учётом перспективы (Homography.js).
+ * Рендерит текстуру на четырёхугольник стены с учётом перспективы (через perspectivejs).
  *
  * @param corners — 4 угла стены в координатах канваса, порядок: [TL, BL, BR, TR]
  */
@@ -184,65 +204,66 @@ export async function renderPerspectiveWallTexture(
   canvasHeight: number,
   textureScale: number = 0.25
 ): Promise<{ canvas: HTMLCanvasElement; offsetX: number; offsetY: number; localCorners: [number, number][] }> {
-  const img = await loadTextureImage(textureUrl)
-
+  const img = await loadTextureImage(textureUrl);
   if (corners.length < 4) {
-    const empty = document.createElement('canvas')
-    empty.width = Math.max(1, canvasWidth)
-    empty.height = Math.max(1, canvasHeight)
-    return { canvas: empty, offsetX: 0, offsetY: 0, localCorners: [] }
+    const empty = document.createElement('canvas');
+    empty.width = Math.max(1, canvasWidth);
+    empty.height = Math.max(1, canvasHeight);
+    return { canvas: empty, offsetX: 0, offsetY: 0, localCorners: [] };
   }
 
-  const xs = corners.map((c) => c[0])
-  const ys = corners.map((c) => c[1])
-  const minX = Math.min(...xs)
-  const maxX = Math.max(...xs)
-  const minY = Math.min(...ys)
-  const maxY = Math.max(...ys)
-  const bboxW = Math.max(1, Math.ceil(maxX - minX))
-  const bboxH = Math.max(1, Math.ceil(maxY - minY))
-  const localCorners = corners.map(([x, y]) => [x - minX, y - minY] as [number, number])
+  // --- FIX: srcCanvas размера bbox стены ---
+  const xs = corners.map((c) => c[0]);
+  const ys = corners.map((c) => c[1]);
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
+  const bboxW = Math.max(1, Math.ceil(maxX - minX));
+  const bboxH = Math.max(1, Math.ceil(maxY - minY));
+  const srcCanvas = createPatternCanvas(img, 'repeat', bboxW, bboxH);
+  const localCorners = corners.map(([x, y]) => [x - minX, y - minY] as [number, number]);
 
-  // Источник: тайлим текстуру в canvas такого же размера, что bbox стены,
-  // а масштаб паттерна регулируем через drawImage(tileW/tileH).
-  const srcCanvas = createScaledTiledCanvas(img, bboxW, bboxH, textureScale)
-  const srcImageData = srcCanvas.getContext('2d')!.getImageData(0, 0, bboxW, bboxH)
+  // --- FIX 2: bbox только для оффсета ---
+  const xs2 = corners.map((c) => c[0]);
+  const ys2 = corners.map((c) => c[1]);
+  const minX2 = Math.min(...xs2);
+  const maxX2 = Math.max(...xs2);
+  const minY2 = Math.min(...ys2);
+  const maxY2 = Math.max(...ys2);
+  const bboxW2 = Math.max(1, Math.ceil(maxX2 - minX2));
+  const bboxH2 = Math.max(1, Math.ceil(maxY2 - minY2));
+  const localCorners2 = corners.map(([x, y]) => [x - minX2, y - minY2] as [number, number]);
 
-  // Homography: проектное преобразование прямоугольника srcCanvas → четырёхугольник стены.
-  // Входные точки приходят как [TL, BL, BR, TR], а для матчинга с прямоугольником удобнее
-  // подать dst-углы в порядке [TL, TR, BR, BL].
-  const [tl, bl, br, tr] = localCorners
-  const dstQuad: [number, number][] = [tl, tr, br, bl]
-
-  // Homography.js подбирает выходной кадр по dst-точкам и может добавлять “паддинг”, если min(dst) > 0.
-  // Нормализуем dstQuad к (0,0), а смещение компенсируем в offsetX/offsetY и clipPath.
-  const dstMinX = Math.min(dstQuad[0][0], dstQuad[1][0], dstQuad[2][0], dstQuad[3][0])
-  const dstMinY = Math.min(dstQuad[0][1], dstQuad[1][1], dstQuad[2][1], dstQuad[3][1])
-  const shiftedDstQuad: [number, number][] = dstQuad.map(
-    ([x, y]) => [x - dstMinX, y - dstMinY] as [number, number]
-  )
-
-  const hom = new Homography('projective', bboxW, bboxH)
-  hom.setSourcePoints([
-    [0, 0],
-    [bboxW, 0],
-    [bboxW, bboxH],
-    [0, bboxH],
-  ])
-  hom.setDestinyPoints(shiftedDstQuad)
-  hom.setImage(srcImageData)
-  const warped: ImageData = hom.warp()
-
-  const offscreen = document.createElement('canvas')
-  offscreen.width = warped.width
-  offscreen.height = warped.height
-  const ctx = offscreen.getContext('2d')
+  // --- FIX 3: offscreen canvas размера bbox ---
+  const offscreen = document.createElement('canvas');
+  offscreen.width = bboxW;
+  offscreen.height = bboxH;
+  const ctx = offscreen.getContext('2d');
   if (!ctx) {
-    return { canvas: offscreen, offsetX: minX + dstMinX, offsetY: minY + dstMinY, localCorners: shiftedDstQuad }
+    return { canvas: offscreen, offsetX: minX, offsetY: minY, localCorners };
   }
-  ctx.putImageData(warped, 0, 0)
 
-  return { canvas: offscreen, offsetX: minX + dstMinX, offsetY: minY + dstMinY, localCorners: shiftedDstQuad }
+  // --- FIX: dstQuad = localCorners ---
+  const dstQuad = localCorners;
+
+  // --- FIX 5: логирование ---
+  console.log('[WallTexture] renderPerspectiveWallTexture:', {
+    textureUrl,
+    srcW,
+    srcH,
+    bboxW,
+    bboxH,
+    corners,
+    localCorners,
+    dstQuad,
+  });
+
+  // --- FIX 6: рисуем перспективу ---
+  const p = new (Perspective as any)(ctx, srcCanvas);
+  p.draw(dstQuad);
+
+  return { canvas: offscreen, offsetX: minX, offsetY: minY, localCorners };
 }
 
 export { textureCache }

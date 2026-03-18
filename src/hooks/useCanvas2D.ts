@@ -1,5 +1,5 @@
 import { useEffect, useRef, useCallback, useState } from 'react'
-import { Canvas, FabricImage, Point, PencilBrush, Group, Rect, Path, Circle, Text } from 'fabric'
+import { Canvas, FabricImage, Point, PencilBrush, Group, Rect, Path } from 'fabric'
 import type { FabricObject } from 'fabric'
 import { useVisualizerStore } from '@/store/useVisualizerStore'
 import { useUIStore } from '@/store/useUIStore'
@@ -22,7 +22,6 @@ export function useCanvas2D({
   containerWidth = 800,
   containerHeight = 600,
 }: UseCanvas2DOptions) {
-  const DEBUG_WALL_OVERLAY = true
   const canvasInstanceRef = useRef<Canvas | null>(null)
   const [isReady, setIsReady] = useState(false)
   const [drawingMode, setDrawingModeState] = useState(false)
@@ -33,7 +32,6 @@ export function useCanvas2D({
   const maskToolRef = useRef(maskTool)
   maskToolRef.current = maskTool
   const setPhotoDataUrl = useVisualizerStore((s) => s.setPhotoDataUrl)
-  const hideWallMasks = useUIStore((s) => s.hideWallMasks)
 
   const rectStartRef = useRef<{ x: number; y: number } | null>(null)
   const rectPreviewRef = useRef<Rect | null>(null)
@@ -43,19 +41,10 @@ export function useCanvas2D({
   const [textureScale, setTextureScaleState] = useState(0.25)
   const [hasTextureLayer, setHasTextureLayer] = useState(false)
   const textureLayerRef = useRef<FabricObject | null>(null)
-  const textureLayerByWallIdRef = useRef<Map<number, FabricObject>>(new Map())
   const wallOverlaysRef = useRef<FabricObject[]>([])
   const wallDebugShapesRef = useRef<FabricObject[]>([])
-  const wallDebugLabelsRef = useRef<FabricObject[]>([])
-  const wallDebugShapeByIdRef = useRef<Map<number, FabricObject>>(new Map())
   const wallIdByObjectRef = useRef<WeakMap<FabricObject, number>>(new WeakMap())
   const WALL_BUTTON_DATA_KEY = 'wallId'
-  const overlayUidCounterRef = useRef(0)
-
-  const editWallCorners = useUIStore((s) => s.editWallCorners)
-  const cornerHandlesRef = useRef<FabricObject[]>([])
-  const cornerHandleMetaRef = useRef<WeakMap<FabricObject, { wallId: number; cornerIndex: number }>>(new WeakMap())
-  const dragDebounceRef = useRef<number | null>(null)
 
   const initCanvas = useCallback(() => {
     const el = canvasRef.current
@@ -336,10 +325,8 @@ export function useCanvas2D({
     canvas.renderAll()
     backgroundImageRef.current = null
     textureLayerRef.current = null
-    textureLayerByWallIdRef.current.clear()
     wallOverlaysRef.current = []
     wallDebugShapesRef.current = []
-    wallDebugShapeByIdRef.current.clear()
     setHasTextureLayer(false)
     setPhotoDataUrl(null)
     useWallStore.getState().setWalls([], null)
@@ -394,60 +381,22 @@ export function useCanvas2D({
     (walls: WallData[], wallImageSize: { width: number; height: number } | null) => {
       const canvas = canvasInstanceRef.current
       if (!canvas) return
-      const callId = `swo-${Date.now()}`
-      // eslint-disable-next-line no-console
-      console.log(`%c[WallOverlay] setWallOverlays() CALLED`, 'color:magenta;font-weight:bold', {
-        callId,
-        wallsCount: walls.length,
-        wallImageSize,
-        textureLayerByWallIdKeys: Array.from(textureLayerByWallIdRef.current.keys()),
-        wallDebugShapesCount: wallDebugShapesRef.current.length,
-        wallOverlaysCount: wallOverlaysRef.current.length,
-        canvasObjectCount: canvas.getObjects().length,
-        stackTrace: new Error().stack,
-      })
-      const textureObjs = Array.from(textureLayerByWallIdRef.current.values())
-      // eslint-disable-next-line no-console
-      console.log(`[WallOverlay] ${callId} removing ${textureObjs.length} texture objs temporarily`)
-      textureObjs.forEach((obj) => canvas.remove(obj))
-      // eslint-disable-next-line no-console
-      console.log(`[WallOverlay] ${callId} removing ${wallDebugShapesRef.current.length} old debug shapes`)
+      // убрать старые фигуры стен
       wallDebugShapesRef.current.forEach((obj) => canvas.remove(obj))
       wallDebugShapesRef.current = []
-      wallDebugShapeByIdRef.current.clear()
-      // eslint-disable-next-line no-console
-      console.log(`[WallOverlay] ${callId} removing ${wallDebugLabelsRef.current.length} old debug labels`)
-      wallDebugLabelsRef.current.forEach((obj) => canvas.remove(obj))
-      wallDebugLabelsRef.current = []
-      // eslint-disable-next-line no-console
-      console.log(`[WallOverlay] ${callId} removing ${wallOverlaysRef.current.length} old overlay buttons`)
       wallOverlaysRef.current.forEach((obj) => canvas.remove(obj))
       wallOverlaysRef.current = []
       if (walls.length === 0 || !wallImageSize) {
-        textureObjs.forEach((obj) => canvas.add(obj))
         canvas.requestRenderAll()
         return
       }
       const bounds = getBackgroundBounds()
-      if (!bounds) {
-        // eslint-disable-next-line no-console
-        console.warn(`[WallOverlay] ${callId} ABORT: no background bounds`)
-        return
-      }
+      if (!bounds) return
       const scaleX = bounds.width / wallImageSize.width
       const scaleY = bounds.height / wallImageSize.height
-      const textured = useWallStore.getState().wallTextures
-      // eslint-disable-next-line no-console
-      console.log(`[WallOverlay] ${callId} wallTextures from store:`, JSON.parse(JSON.stringify(textured)))
       for (const wall of walls) {
-        const hasTexture = Boolean(textured[wall.id])
-        const skip = wall.corners.length >= 3 && hasTexture
-        // eslint-disable-next-line no-console
-        console.log(`[WallOverlay] ${callId} wall ${wall.id}: corners=${wall.corners.length}, textured=${hasTexture}, textureValue=${JSON.stringify(textured[wall.id])}, skipBlue=${skip}`)
-        const cx = bounds.left + wall.center[0] * scaleX
-        const cy = bounds.top + wall.center[1] * scaleY
-        if (!hideWallMasks && wall.corners.length >= 3 && !textured[wall.id]) {
-          const overlayUid = `wo-${wall.id}-${++overlayUidCounterRef.current}`
+        // многоугольник стены поверх фото, чтобы было видно реальную форму
+        if (wall.corners.length >= 3) {
           const d =
             wall.corners
               .map((c, i) => {
@@ -457,54 +406,18 @@ export function useCanvas2D({
               })
               .join(' ') + ' Z'
           const shape = new Path(d, {
-            fill: 'rgba(59,130,246,0.12)',
+            fill: 'rgba(59,130,246,0.12)', // полупрозрачный синий
             stroke: 'rgba(37,99,235,0.8)',
             strokeWidth: 2,
             selectable: false,
             evented: false,
           })
-          ;(shape as unknown as { set: (o: Record<string, unknown>) => void }).set({
-            data: { isWallOverlay: true, wallId: wall.id, overlayUid },
-          })
           canvas.add(shape)
           wallDebugShapesRef.current.push(shape)
-          wallDebugShapeByIdRef.current.set(wall.id, shape)
-          // eslint-disable-next-line no-console
-          console.log(`%c[WallOverlay] ${callId} >>> CREATED blue shape for wall ${wall.id}`, 'color:red;font-weight:bold')
-          // eslint-disable-next-line no-console
-          console.log(`[WallOverlay] ${callId} overlay bbox`, {
-            wallId: wall.id,
-            overlayUid,
-            bbox: (shape as unknown as { getBoundingRect: () => unknown }).getBoundingRect(),
-          })
-
-          const label = new Text(`W${wall.id}`, {
-            left: cx,
-            top: cy,
-            originX: 'center',
-            originY: 'center',
-            fontSize: 18,
-            fontWeight: 'bold',
-            fill: '#ef4444',
-            stroke: '#ffffff',
-            strokeWidth: 4,
-            paintFirst: 'stroke',
-            selectable: false,
-            evented: false,
-            opacity: 0.95,
-          })
-          ;(label as unknown as { set: (o: Record<string, unknown>) => void }).set({
-            data: { isWallOverlayLabel: true, wallId: wall.id, overlayUid },
-          })
-          canvas.add(label)
-          wallDebugLabelsRef.current.push(label)
-          // eslint-disable-next-line no-console
-          console.log(`[WallOverlay] ${callId} label bbox`, {
-            wallId: wall.id,
-            overlayUid,
-            bbox: (label as unknown as { getBoundingRect: () => unknown }).getBoundingRect(),
-          })
         }
+
+        const cx = bounds.left + wall.center[0] * scaleX
+        const cy = bounds.top + wall.center[1] * scaleY
         const btn = new Rect({
           width: 36,
           height: 22,
@@ -528,14 +441,9 @@ export function useCanvas2D({
         canvas.add(btn)
         wallOverlaysRef.current.push(btn)
       }
-      // eslint-disable-next-line no-console
-      console.log(`[WallOverlay] ${callId} re-adding ${textureObjs.length} texture objs on top`)
-      textureObjs.forEach((obj) => canvas.add(obj))
-      // eslint-disable-next-line no-console
-      console.log(`[WallOverlay] ${callId} DONE. canvas objects: ${canvas.getObjects().length}, debugShapes: ${wallDebugShapesRef.current.length}`)
       canvas.requestRenderAll()
     },
-    [getBackgroundBounds, hideWallMasks]
+    [getBackgroundBounds]
   )
 
   const applyTexture = useCallback(
@@ -580,180 +488,59 @@ export function useCanvas2D({
   )
 
   const applyTextureToWall = useCallback(
-    async (
-      textureUrl: string,
-      wallCornersImageCoords: [number, number][],
-      wallImageSize: { width: number; height: number },
-      wallId: number
-    ) => {
-      const canvas = canvasInstanceRef.current
-      if (!canvas) return
-      const requestId = `atw-${wallId}-${Date.now()}`
-      // eslint-disable-next-line no-console
-      console.log(`%c[WallOverlay] applyTextureToWall START`, 'color:blue;font-weight:bold', {
-        requestId,
-        wallId,
+    async (textureUrl: string, wallCorners: [number, number][]) => {
+      const canvas = canvasInstanceRef.current;
+      if (!canvas) return;
+      if (textureLayerRef.current) {
+        canvas.remove(textureLayerRef.current);
+        textureLayerRef.current = null;
+      }
+      const { renderPerspectiveWallTexture } = await import('@/lib/texture-processor');
+      const width = canvas.getWidth() ?? containerWidth;
+      const height = canvas.getHeight() ?? containerHeight;
+      const { canvas: textureCanvas, offsetX, offsetY } = await renderPerspectiveWallTexture(
         textureUrl,
-        canvasObjectCount: canvas.getObjects().length,
-        existingTextureForWall: textureLayerByWallIdRef.current.has(wallId),
-      })
-      const existing = textureLayerByWallIdRef.current.get(wallId)
-      if (existing) {
-        canvas.remove(existing)
-        textureLayerByWallIdRef.current.delete(wallId)
-        // eslint-disable-next-line no-console
-        console.log(`[WallOverlay] ${requestId} removed old texture for wall ${wallId}`)
-      }
-      const bounds = getBackgroundBounds()
-      if (!bounds) {
-        // eslint-disable-next-line no-console
-        console.warn(`[WallOverlay] ${requestId} ABORT: no bounds`)
-        return
-      }
-      const scaleXBounds = bounds.width / wallImageSize.width
-      const scaleYBounds = bounds.height / wallImageSize.height
-      const targetSceneCorners = wallCornersImageCoords.map(([ix, iy]) => [bounds.left + ix * scaleXBounds, bounds.top + iy * scaleYBounds] as [number, number])
-      const xs = targetSceneCorners.map((p) => p[0])
-      const ys = targetSceneCorners.map((p) => p[1])
-      const targetBbox = {
-        left: Math.min(...xs),
-        top: Math.min(...ys),
-        width: Math.max(...xs) - Math.min(...xs),
-        height: Math.max(...ys) - Math.min(...ys),
-      }
-      // eslint-disable-next-line no-console
-      console.log(`[WallOverlay] ${requestId} target wall corners (image)`, wallCornersImageCoords)
-      // eslint-disable-next-line no-console
-      console.log(`[WallOverlay] ${requestId} target wall corners (scene)`, targetSceneCorners)
-      // eslint-disable-next-line no-console
-      console.log(`[WallOverlay] ${requestId} target wall bbox (scene)`, targetBbox)
-      const { warpWallTexture } = await import('@/hooks/warpWallTexture')
-      // eslint-disable-next-line no-console
-      console.log(`[WallOverlay] ${requestId} warpWallTexture starting...`)
-      const blob = await warpWallTexture({
-        textureUrl,
-        corners: wallCornersImageCoords,
-        imageSize: wallImageSize,
-        textureScale,
+        wallCorners,
+        width,
+        height,
+        textureScale
+      );
+      const img = new Image();
+      img.src = textureCanvas.toDataURL();
+      await new Promise((resolve) => { img.onload = resolve; });
+      const fabricImg = new FabricImage(img, {
+        left: offsetX,
+        top: offsetY,
+        selectable: false,
+        evented: false,
         opacity: 0.85,
-      })
-      // eslint-disable-next-line no-console
-      console.log(`[WallOverlay] ${requestId} warpWallTexture done, blob size: ${blob.size}`)
-      const objectUrl = URL.createObjectURL(blob)
-      try {
-        const imgEl = await new Promise<HTMLImageElement>((resolve, reject) => {
-          const img = new Image()
-          img.onload = () => resolve(img)
-          img.onerror = reject
-          img.src = objectUrl
-        })
-        const scaleX = scaleXBounds
-        const scaleY = scaleYBounds
-        const fabricImg = new FabricImage(imgEl, {
-          left: bounds.left,
-          top: bounds.top,
-          originX: 'left',
-          originY: 'top',
-          scaleX,
-          scaleY,
-          selectable: false,
-          evented: false,
-          opacity: 1,
-        })
-        canvas.add(fabricImg)
-        canvas.requestRenderAll()
-        textureLayerByWallIdRef.current.set(wallId, fabricImg)
-        setHasTextureLayer(true)
-        // eslint-disable-next-line no-console
-        console.log(`[WallOverlay] ${requestId} texture image added to canvas for wall ${wallId}`)
-        // eslint-disable-next-line no-console
-        console.log(`[WallOverlay] ${requestId} texture bbox`, (fabricImg as unknown as { getBoundingRect: () => unknown }).getBoundingRect())
-
-        const allObjs = canvas.getObjects()
-        const allDataDump = allObjs.map((obj, idx) => {
-          const d = (obj as unknown as { data?: Record<string, unknown> }).data
-          return { idx, type: (obj as unknown as { type?: string }).type, data: d ?? null }
-        })
-        // eslint-disable-next-line no-console
-        console.log(`[WallOverlay] ${requestId} FULL CANVAS DUMP after texture add:`, allDataDump)
-
-        const storeTextures = useWallStore.getState().wallTextures
-        const texturedIds = new Set(
-          Object.entries(storeTextures ?? {})
-            .filter(([, url]) => url)
-            .map(([id]) => Number(id))
-        )
-        texturedIds.add(wallId)
-        // eslint-disable-next-line no-console
-        console.log(`[WallOverlay] ${requestId} texturedIds for removal:`, Array.from(texturedIds), 'storeTextures:', JSON.parse(JSON.stringify(storeTextures)))
-
-        const aabbIntersects = (a: { left: number; top: number; width: number; height: number }, b: { left: number; top: number; width: number; height: number }) => {
-          return a.left < b.left + b.width && a.left + a.width > b.left && a.top < b.top + b.height && a.top + a.height > b.top
-        }
-
-        const overlayObjs = canvas.getObjects().filter((obj) => {
-          const data = (obj as unknown as { data?: Record<string, unknown> }).data
-          return Boolean(data && data.isWallOverlay)
-        })
-        // eslint-disable-next-line no-console
-        console.log(`[WallOverlay] ${requestId} overlays on canvas right now: ${overlayObjs.length}`)
-        overlayObjs.forEach((obj) => {
-          const data = ((obj as unknown as { data?: Record<string, unknown> }).data ?? {}) as any
-          const bbox = (obj as unknown as { getBoundingRect: () => { left: number; top: number; width: number; height: number } }).getBoundingRect()
-          // eslint-disable-next-line no-console
-          console.log(`[WallOverlay] ${requestId} overlay-vs-target`, {
-            overlayWallId: data.wallId,
-            overlayUid: data.overlayUid,
-            overlayBbox: bbox,
-            targetWallId: wallId,
-            targetBbox,
-            intersects: aabbIntersects(bbox, targetBbox),
-          })
-        })
-
-        const toRemove = canvas.getObjects().filter((obj) => {
-          const data = (obj as unknown as { data?: Record<string, unknown> }).data
-          const wid = data?.wallId
-          const isOverlay = Boolean(data && data.isWallOverlay)
-          const widIsNumber = typeof wid === 'number'
-          const inSet = widIsNumber && texturedIds.has(wid as number)
-          if (isOverlay) {
-            // eslint-disable-next-line no-console
-            console.log(`[WallOverlay] ${requestId} overlay candidate:`, { wallId: wid, isWallOverlay: isOverlay, widType: typeof wid, inTexturedSet: inSet, willRemove: isOverlay && widIsNumber && inSet })
-          }
-          return Boolean(data && data.isWallOverlay && widIsNumber && inSet)
-        })
-        // eslint-disable-next-line no-console
-        console.log(`[WallOverlay] ${requestId} toRemove count: ${toRemove.length}`)
-        toRemove.forEach((obj) => canvas.remove(obj))
-        if (toRemove.length > 0) {
-          wallDebugShapesRef.current = wallDebugShapesRef.current.filter((s) => !toRemove.includes(s))
-          toRemove.forEach((obj) => {
-            const d = (obj as unknown as { data?: Record<string, unknown> }).data
-            if (d && typeof d.wallId === 'number') wallDebugShapeByIdRef.current.delete(d.wallId)
-          })
-          canvas.requestRenderAll()
-          // eslint-disable-next-line no-console
-          console.log(`%c[WallOverlay] ${requestId} REMOVED ${toRemove.length} blue shapes`, 'color:green;font-weight:bold')
-        } else {
-          // eslint-disable-next-line no-console
-          console.warn(`%c[WallOverlay] ${requestId} WARNING: NO blue shapes found to remove!`, 'color:orange;font-weight:bold')
-        }
-
-        // eslint-disable-next-line no-console
-        console.log(`[WallOverlay] ${requestId} FINAL canvas objects: ${canvas.getObjects().length}, debugShapes: ${wallDebugShapesRef.current.length}`)
-      } finally {
-        URL.revokeObjectURL(objectUrl)
-      }
+      });
+      // ClipPath по локальным координатам (localCorners)
+      const { localCorners } = await renderPerspectiveWallTexture(
+        textureUrl,
+        wallCorners,
+        width,
+        height,
+        textureScale
+      );
+      const clipPath = new Path(
+        localCorners
+          .map((p, i) => (i === 0 ? `M ${p[0]} ${p[1]}` : `L ${p[0]} ${p[1]}`))
+          .join(' ') + ' Z',
+        { selectable: false, evented: false }
+      );
+      fabricImg.set({ clipPath });
+      canvas.add(fabricImg);
+      textureLayerRef.current = fabricImg;
+      setHasTextureLayer(true);
+      canvas.requestRenderAll();
     },
-    [getBackgroundBounds, textureScale]
+    [containerWidth, containerHeight, textureScale]
   )
 
   const highlightSelectedWall = useCallback((selectedId: number | null) => {
     const canvas = canvasInstanceRef.current
     if (!canvas) return
-    // eslint-disable-next-line no-console
-    console.log('[WallOverlay] highlightSelectedWall', { selectedId, overlayButtonsCount: wallOverlaysRef.current.length })
     for (const obj of wallOverlaysRef.current) {
       const wallId = wallIdByObjectRef.current.get(obj)
       if (wallId != null && wallId === selectedId) {
@@ -793,116 +580,6 @@ export function useCanvas2D({
     canvas?.requestRenderAll()
   }, [])
 
-  const clearCornerHandles = useCallback(() => {
-    const canvas = canvasInstanceRef.current
-    if (!canvas) return
-    cornerHandlesRef.current.forEach((h) => canvas.remove(h))
-    cornerHandlesRef.current = []
-    cornerHandleMetaRef.current = new WeakMap()
-    canvas.requestRenderAll()
-  }, [])
-
-  const updateWallShapePath = useCallback(
-    (wallId: number, corners: [number, number][], wallImageSize: { width: number; height: number }) => {
-      const canvas = canvasInstanceRef.current
-      if (!canvas) return
-      const bounds = getBackgroundBounds()
-      if (!bounds) return
-      const scaleX = bounds.width / wallImageSize.width
-      const scaleY = bounds.height / wallImageSize.height
-      const d =
-        corners
-          .map((c, i) => {
-            const x = bounds.left + c[0] * scaleX
-            const y = bounds.top + c[1] * scaleY
-            return `${i === 0 ? 'M' : 'L'} ${x} ${y}`
-          })
-          .join(' ') + ' Z'
-      const shape = wallDebugShapeByIdRef.current.get(wallId)
-      if (shape && typeof (shape as unknown as { set: (o: Record<string, unknown>) => void }).set === 'function') {
-        ;(shape as unknown as { set: (o: Record<string, unknown>) => void }).set({ path: d })
-      }
-      canvas.requestRenderAll()
-    },
-    [getBackgroundBounds]
-  )
-
-  const syncCornerHandles = useCallback(
-    (wallId: number | null) => {
-      const canvas = canvasInstanceRef.current
-      if (!canvas) return
-      clearCornerHandles()
-      if (!editWallCorners || wallId == null) return
-
-      const state = useWallStore.getState()
-      const wall = state.walls.find((w) => w.id === wallId)
-      const wallImageSize = state.wallImageSize
-      if (!wall || !wallImageSize || wall.corners.length < 4) return
-
-      const bounds = getBackgroundBounds()
-      if (!bounds) return
-      const scaleX = bounds.width / wallImageSize.width
-      const scaleY = bounds.height / wallImageSize.height
-
-      for (let i = 0; i < 4; i++) {
-        const c = wall.corners[i]
-        const x = bounds.left + c[0] * scaleX
-        const y = bounds.top + c[1] * scaleY
-        const h = new Circle({
-          left: x,
-          top: y,
-          radius: 6,
-          fill: '#ffffff',
-          stroke: '#2563eb',
-          strokeWidth: 2,
-          originX: 'center',
-          originY: 'center',
-          selectable: true,
-          evented: true,
-          hoverCursor: 'move',
-        })
-        cornerHandleMetaRef.current.set(h, { wallId, cornerIndex: i })
-        canvas.add(h)
-        cornerHandlesRef.current.push(h)
-      }
-
-      canvas.on('object:moving', (e) => {
-        const target = (e as unknown as { target?: FabricObject | null }).target
-        if (!target) return
-        const meta = cornerHandleMetaRef.current.get(target)
-        if (!meta) return
-
-        const state2 = useWallStore.getState()
-        const wall2 = state2.walls.find((w) => w.id === meta.wallId)
-        const wallImageSize2 = state2.wallImageSize
-        if (!wall2 || !wallImageSize2) return
-        const bounds2 = getBackgroundBounds()
-        if (!bounds2) return
-
-        const sx = wallImageSize2.width / bounds2.width
-        const sy = wallImageSize2.height / bounds2.height
-        const cx = (target.left ?? 0)
-        const cy = (target.top ?? 0)
-        const ix = (cx - bounds2.left) * sx
-        const iy = (cy - bounds2.top) * sy
-        const nextCorners = wall2.corners.map((p) => [...p] as [number, number])
-        nextCorners[meta.cornerIndex] = [Math.max(0, Math.min(wallImageSize2.width, ix)), Math.max(0, Math.min(wallImageSize2.height, iy))]
-        state2.updateWallCorners(meta.wallId, nextCorners)
-        updateWallShapePath(meta.wallId, nextCorners, wallImageSize2)
-
-        const texUrl = state2.wallTextures[meta.wallId]
-        if (texUrl) {
-          if (dragDebounceRef.current) window.clearTimeout(dragDebounceRef.current)
-          dragDebounceRef.current = window.setTimeout(() => {
-            applyTextureToWall(texUrl, nextCorners, wallImageSize2, meta.wallId).catch(() => {})
-          }, 200)
-        }
-      })
-      canvas.requestRenderAll()
-    },
-    [applyTextureToWall, clearCornerHandles, editWallCorners, getBackgroundBounds, updateWallShapePath]
-  )
-
   return {
     canvasInstanceRef,
     isReady,
@@ -920,7 +597,6 @@ export function useCanvas2D({
     applyTexture,
     applyTextureToWall,
     highlightSelectedWall,
-    syncCornerHandles,
     finishLasso,
     clearMaskToolState,
     textureScale,
