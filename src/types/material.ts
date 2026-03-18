@@ -4,7 +4,7 @@
 
 export type MaterialId = string
 
-export type MaterialCategory = 'vagonka' | 'brus' | 'blockhouse' | 'boards' | 'other'
+export type MaterialCategory = 'vagonka' | 'brus' | 'blockhouse' | 'boards' | 'planken' | 'other'
 
 export interface Texture {
   id: string

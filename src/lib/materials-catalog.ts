@@ -66,4 +66,16 @@ export const DEFAULT_MATERIALS: Material[] = [
     },
     presetColors: [],
   },
+  {
+    id: 'planken-natural',
+    name: 'Планкен натуральный',
+    category: 'planken',
+    texture: {
+      id: 'tex-planken-natural',
+      url: `${TEXTURES_BASE_PATH}/planken/natural.png`,
+      name: 'Натуральный',
+      thumbnailUrl: `${TEXTURES_BASE_PATH}/planken/swatches/natural.png`,
+    },
+    presetColors: [],
+  },
 ]
