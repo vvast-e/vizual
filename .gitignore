@@ -30,6 +30,7 @@ venv/
 .venv/
 __pycache__/
 *.pyc
+backend/wall_estimation/weight/model_retrained.ckpt
 
 # Environment / secrets
 .env
