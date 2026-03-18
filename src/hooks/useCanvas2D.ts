@@ -1,5 +1,5 @@
 import { useEffect, useRef, useCallback, useState } from 'react'
-import { Canvas, FabricImage, Point, PencilBrush, Group, Rect, Path } from 'fabric'
+import { Canvas, FabricImage, Point, PencilBrush, Group, Rect, Path, Circle } from 'fabric'
 import type { FabricObject } from 'fabric'
 import { useVisualizerStore } from '@/store/useVisualizerStore'
 import { useUIStore } from '@/store/useUIStore'
@@ -45,6 +45,10 @@ export function useCanvas2D({
   const wallDebugShapesRef = useRef<FabricObject[]>([])
   const wallIdByObjectRef = useRef<WeakMap<FabricObject, number>>(new WeakMap())
   const WALL_BUTTON_DATA_KEY = 'wallId'
+  const cornerHandlesRef = useRef<FabricObject[]>([])
+  const CORNER_HANDLE_DATA_KEY = 'cornerHandle'
+  const exteriorMaskRef = useRef<FabricObject | null>(null)
+  const EXTERIOR_MASK_DATA_KEY = 'isExteriorMask'
 
   const initCanvas = useCallback(() => {
     const el = canvasRef.current
@@ -325,6 +329,7 @@ export function useCanvas2D({
     canvas.renderAll()
     backgroundImageRef.current = null
     textureLayerRef.current = null
+    exteriorMaskRef.current = null
     wallOverlaysRef.current = []
     wallDebugShapesRef.current = []
     setHasTextureLayer(false)
@@ -376,6 +381,54 @@ export function useCanvas2D({
     const rect = (bg as unknown as { getBoundingRect: () => { left: number; top: number; width: number; height: number } }).getBoundingRect()
     return { left: rect.left, top: rect.top, width: rect.width, height: rect.height }
   }, [])
+
+  const setExteriorMaskOverlay = useCallback(
+    async (maskBase64Png: string | null, imageSize: { width: number; height: number } | null) => {
+      const canvas = canvasInstanceRef.current
+      if (!canvas) return
+
+      if (exteriorMaskRef.current) {
+        canvas.remove(exteriorMaskRef.current)
+        exteriorMaskRef.current = null
+      }
+
+      if (!maskBase64Png || !imageSize) {
+        canvas.requestRenderAll()
+        return
+      }
+
+      const bounds = getBackgroundBounds()
+      if (!bounds) return
+
+      const dataUrl = `data:image/png;base64,${maskBase64Png}`
+      const img = await FabricImage.fromURL(dataUrl)
+      const w = img.width ?? 0
+      const h = img.height ?? 0
+      if (w <= 0 || h <= 0) return
+
+      img.set({
+        left: bounds.left,
+        top: bounds.top,
+        originX: 'left',
+        originY: 'top',
+        scaleX: bounds.width / imageSize.width,
+        scaleY: bounds.height / imageSize.height,
+        selectable: false,
+        evented: false,
+        opacity: 0.35,
+      })
+      ;(img as unknown as { set: (o: Record<string, unknown>) => void }).set({
+        data: { [EXTERIOR_MASK_DATA_KEY]: true },
+      })
+
+      // добавляем поверх background, но под оверлеями/текстурой
+      canvas.add(img)
+      canvas.moveObjectTo(img, 1)
+      exteriorMaskRef.current = img
+      canvas.requestRenderAll()
+    },
+    [getBackgroundBounds]
+  )
 
   const setWallOverlays = useCallback(
     (walls: WallData[], wallImageSize: { width: number; height: number } | null) => {
@@ -552,6 +605,75 @@ export function useCanvas2D({
     canvas.requestRenderAll()
   }, [])
 
+  const syncCornerHandles = useCallback((selectedWallId: number | null) => {
+    const canvas = canvasInstanceRef.current
+    if (!canvas) return
+
+    // remove existing handles
+    for (const h of cornerHandlesRef.current) canvas.remove(h)
+    cornerHandlesRef.current = []
+
+    const { editWallCorners } = useUIStore.getState()
+    if (!editWallCorners || selectedWallId == null) {
+      canvas.requestRenderAll()
+      return
+    }
+
+    const { walls, wallImageSize, updateWallCorners } = useWallStore.getState()
+    const wall = walls.find((w) => w.id === selectedWallId)
+    if (!wall || !wallImageSize || wall.corners.length < 3) {
+      canvas.requestRenderAll()
+      return
+    }
+
+    const bounds = getBackgroundBounds()
+    if (!bounds) return
+    const scaleX = bounds.width / wallImageSize.width
+    const scaleY = bounds.height / wallImageSize.height
+
+    const handleRadius = 8
+    wall.corners.forEach(([ix, iy], idx) => {
+      const x = bounds.left + ix * scaleX
+      const y = bounds.top + iy * scaleY
+
+      const handle = new Circle({
+        left: x,
+        top: y,
+        radius: handleRadius,
+        fill: 'rgba(255,255,255,0.95)',
+        stroke: 'rgba(59,130,246,1)',
+        strokeWidth: 2,
+        originX: 'center',
+        originY: 'center',
+        selectable: true,
+        evented: true,
+        hoverCursor: 'move',
+        hasControls: false,
+        hasBorders: false,
+        lockScalingX: true,
+        lockScalingY: true,
+        lockRotation: true,
+      })
+      ;(handle as unknown as { set: (o: Record<string, unknown>) => void }).set({
+        data: { [CORNER_HANDLE_DATA_KEY]: true, wallId: selectedWallId, cornerIndex: idx },
+      })
+
+      handle.on('moving', () => {
+        const hx = (handle.left ?? x) as number
+        const hy = (handle.top ?? y) as number
+        const newIx = Math.round((hx - bounds.left) / scaleX)
+        const newIy = Math.round((hy - bounds.top) / scaleY)
+        const next = wall.corners.map((c, i) => (i === idx ? ([newIx, newIy] as [number, number]) : c))
+        updateWallCorners(selectedWallId, next)
+      })
+
+      canvas.add(handle)
+      cornerHandlesRef.current.push(handle)
+    })
+
+    canvas.requestRenderAll()
+  }, [getBackgroundBounds])
+
   const setTextureScale = useCallback((scale: number) => {
     const s = Math.max(0.05, Math.min(1, scale))
     setTextureScaleState(s)
@@ -594,9 +716,11 @@ export function useCanvas2D({
     getMaskObjects,
     getBackgroundBounds,
     setWallOverlays,
+    setExteriorMaskOverlay,
     applyTexture,
     applyTextureToWall,
     highlightSelectedWall,
+    syncCornerHandles,
     finishLasso,
     clearMaskToolState,
     textureScale,

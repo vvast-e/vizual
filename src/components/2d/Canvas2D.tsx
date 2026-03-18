@@ -5,7 +5,7 @@ import { useVisualizerStore } from '@/store/useVisualizerStore'
 import { useMaterialStore } from '@/store/useMaterialStore'
 import { useUIStore } from '@/store/useUIStore'
 import { useWallStore } from '@/store/useWallStore'
-import { detectWalls } from '@/hooks/useWallDetection'
+import { detectWalls, detectExterior } from '@/hooks/useWallDetection'
 import { PhotoUploader } from './PhotoUploader'
 import { MaskEditor } from './MaskEditor'
 import { defaultExportFilename } from '@/lib/export-utils'
@@ -30,6 +30,8 @@ export function Canvas2D({
   const setMaskTool = useUIStore((s) => s.setMaskTool)
   const hideWallMasks = useUIStore((s) => s.hideWallMasks)
   const setHideWallMasks = useUIStore((s) => s.setHideWallMasks)
+  const sceneMode = useUIStore((s) => s.sceneMode)
+  const setSceneMode = useUIStore((s) => s.setSceneMode)
 
   const walls = useWallStore((s) => s.walls)
   const wallImageSize = useWallStore((s) => s.wallImageSize)
@@ -51,6 +53,7 @@ export function Canvas2D({
     setBrushSize,
     clearMask,
     setWallOverlays,
+    setExteriorMaskOverlay,
     applyTexture,
     applyTextureToWall,
     highlightSelectedWall,
@@ -165,6 +168,30 @@ export function Canvas2D({
 
   return (
     <div className={`flex flex-col gap-2 ${className}`}>
+      <div className="flex items-center gap-1 rounded border border-gray-200 bg-white p-1">
+        <button
+          type="button"
+          onClick={() => setSceneMode('interior')}
+          className={`rounded px-3 py-1 text-sm font-medium transition-colors ${
+            sceneMode === 'interior'
+              ? 'bg-gray-800 text-white'
+              : 'text-gray-600 hover:bg-gray-100'
+          }`}
+        >
+          Интерьер
+        </button>
+        <button
+          type="button"
+          onClick={() => setSceneMode('exterior')}
+          className={`rounded px-3 py-1 text-sm font-medium transition-colors ${
+            sceneMode === 'exterior'
+              ? 'bg-gray-800 text-white'
+              : 'text-gray-600 hover:bg-gray-100'
+          }`}
+        >
+          Экстерьер
+        </button>
+      </div>
       <div className="relative overflow-hidden rounded border border-gray-200 bg-gray-100" style={{ width, height, maxWidth: '100%' }}>
         <canvas
           ref={canvasRef}
@@ -180,18 +207,38 @@ export function Canvas2D({
               onFileSelect={(file) => {
                 loadPhotoFromFile(file)
                 setDetecting(true)
-                detectWalls(file)
-                  .then((res) => {
-                    // eslint-disable-next-line no-console
-                    console.log('%c[Canvas2D] detectWalls RESULT -> setWalls', 'color:cyan;font-weight:bold', {
-                      wallsCount: res.walls?.length ?? 0,
-                      wallIds: Array.isArray(res.walls) ? res.walls.map((w) => w.id) : [],
-                      image_size: res.image_size,
+
+                if (sceneMode === 'exterior') {
+                  detectExterior(file)
+                    .then((res) => {
+                      // eslint-disable-next-line no-console
+                      console.log('%c[Canvas2D] detectExterior RESULT', 'color:orange;font-weight:bold', {
+                        image_size: res.image_size,
+                        hasMasks: Boolean(res.masks),
+                        buildingBbox: res.debug?.building_bbox,
+                      })
+                      setWalls([], res.image_size)
+                      setExteriorMaskOverlay(res.masks?.wall_minus_holes ?? null, res.image_size)
                     })
-                    setWalls(res.walls, res.image_size)
-                  })
-                  .catch(() => {})
-                  .finally(() => setDetecting(false))
+                    .catch((err) => {
+                      console.error('[Canvas2D] detectExterior failed', err)
+                    })
+                    .finally(() => setDetecting(false))
+                } else {
+                  setExteriorMaskOverlay(null, null)
+                  detectWalls(file)
+                    .then((res) => {
+                      // eslint-disable-next-line no-console
+                      console.log('%c[Canvas2D] detectWalls RESULT -> setWalls', 'color:cyan;font-weight:bold', {
+                        wallsCount: res.walls?.length ?? 0,
+                        wallIds: Array.isArray(res.walls) ? res.walls.map((w) => w.id) : [],
+                        image_size: res.image_size,
+                      })
+                      setWalls(res.walls, res.image_size)
+                    })
+                    .catch(() => {})
+                    .finally(() => setDetecting(false))
+                }
               }}
               className="h-full min-h-[200px] w-full max-w-md"
             />
@@ -199,7 +246,7 @@ export function Canvas2D({
         )}
         {isDetecting && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/30 text-white">
-            Определение стен…
+            {sceneMode === 'exterior' ? 'Определение фасада…' : 'Определение стен…'}
           </div>
         )}
       </div>

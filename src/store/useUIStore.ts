@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 
 export type MaskTool = 'brush' | 'rect' | 'lasso' | null
+export type SceneMode = 'interior' | 'exterior'
 
 interface UIState {
   materialCatalogOpen: boolean
@@ -12,12 +13,15 @@ interface UIState {
   editWallCorners: boolean
   /** Скрывать все синие маски стен (оверлеи) */
   hideWallMasks: boolean
+  /** Режим сцены: интерьер или экстерьер */
+  sceneMode: SceneMode
   setMaterialCatalogOpen: (open: boolean) => void
   setExportModalOpen: (open: boolean) => void
   setActiveToolbarPanel: (panel: string | null) => void
   setMaskTool: (tool: MaskTool) => void
   setEditWallCorners: (v: boolean) => void
   setHideWallMasks: (v: boolean) => void
+  setSceneMode: (mode: SceneMode) => void
 }
 
 export const useUIStore = create<UIState>((set) => ({
@@ -27,10 +31,12 @@ export const useUIStore = create<UIState>((set) => ({
   maskTool: null,
   editWallCorners: false,
   hideWallMasks: false,
+  sceneMode: 'interior',
   setMaterialCatalogOpen: (materialCatalogOpen) => set({ materialCatalogOpen }),
   setExportModalOpen: (exportModalOpen) => set({ exportModalOpen }),
   setActiveToolbarPanel: (activeToolbarPanel) => set({ activeToolbarPanel }),
   setMaskTool: (maskTool) => set({ maskTool }),
   setEditWallCorners: (editWallCorners) => set({ editWallCorners }),
   setHideWallMasks: (hideWallMasks) => set({ hideWallMasks }),
+  setSceneMode: (sceneMode) => set({ sceneMode }),
 }))

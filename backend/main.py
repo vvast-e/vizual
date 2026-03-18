@@ -215,6 +215,30 @@ async def detect_walls(file: UploadFile = File(...)):
             pass
 
 
+@app.post("/api/detect-exterior")
+async def detect_exterior(file: UploadFile = File(...)):
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="Expected an image file (JPEG/PNG)")
+    try:
+        contents = await file.read()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to read file: {e}")
+
+    img_arr = np.frombuffer(contents, dtype=np.uint8)
+    img = cv2.imdecode(img_arr, cv2.IMREAD_COLOR)
+    if img is None:
+        raise HTTPException(status_code=400, detail="Failed to decode image")
+    h, w = img.shape[:2]
+
+    from exterior_pipeline import run_exterior_pipeline
+
+    try:
+        result = await run_exterior_pipeline(contents, w, h)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/health")
 def health():
     return {"status": "ok"}

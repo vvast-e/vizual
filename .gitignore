@@ -67,4 +67,8 @@ dist-ssr
 *.sw?
 *.ckpt
 *.pth
+*.onnx
 warp-debug/
+
+# HuggingFace cache (model weights auto-downloaded by transformers)
+.cache/huggingface/

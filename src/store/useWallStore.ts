@@ -39,6 +39,11 @@ export const useWallStore = create<WallState>((set) => ({
     set((s) => ({ wallTextures: { ...s.wallTextures, [wallId]: textureUrl } })),
   updateWallCorners: (wallId, corners) =>
     set((s) => ({
-      walls: s.walls.map((w) => (w.id === wallId ? { ...w, corners } : w)),
+      walls: s.walls.map((w) => {
+        if (w.id !== wallId) return w
+        const cx = corners.length ? corners.reduce((acc, c) => acc + c[0], 0) / corners.length : w.center[0]
+        const cy = corners.length ? corners.reduce((acc, c) => acc + c[1], 0) / corners.length : w.center[1]
+        return { ...w, corners, center: [Number(cx.toFixed(2)), Number(cy.toFixed(2))] as [number, number] }
+      }),
     })),
 }))
