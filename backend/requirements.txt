@@ -1,0 +1,15 @@
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+python-multipart>=0.0.6
+kornia==0.4.1
+numpy>=1.24.0,<2.0
+opencv-python>=4.5.4
+Pillow>=9.0
+pytorch-lightning==2.0.2
+scipy>=1.9.0
+torch==2.0.1
+torchvision==0.15.2
+tqdm>=4.65.0
+loguru>=0.7.0
+matplotlib>=3.3.0
+onegan @ git+https://github.com/leVirve/OneGan
