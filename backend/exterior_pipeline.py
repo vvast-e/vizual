@@ -429,6 +429,54 @@ def _order_rect_corners_tl_bl_br_tr(box_pts: np.ndarray) -> list[list[int]]:
     ]
 
 
+def _corners_from_polygon_perspective(polygon: list[list[int]]) -> list[list[int]] | None:
+    """
+    Build perspective-like quad [TL, BL, BR, TR] from polygon points.
+    Uses top/bottom horizontal bands and left/right extremes in each band.
+    """
+    pts = np.array(polygon, dtype=np.float32).reshape(-1, 2)
+    if pts.shape[0] < 4:
+        return None
+
+    y_min = float(np.min(pts[:, 1]))
+    y_max = float(np.max(pts[:, 1]))
+    y_span = y_max - y_min
+    if y_span < 4.0:
+        return None
+
+    band = max(4.0, y_span * 0.30)
+    top_pts = pts[pts[:, 1] <= (y_min + band)]
+    bot_pts = pts[pts[:, 1] >= (y_max - band)]
+    if top_pts.shape[0] < 2 or bot_pts.shape[0] < 2:
+        return None
+
+    tl = top_pts[np.argmin(top_pts[:, 0])]
+    tr = top_pts[np.argmax(top_pts[:, 0])]
+    bl = bot_pts[np.argmin(bot_pts[:, 0])]
+    br = bot_pts[np.argmax(bot_pts[:, 0])]
+
+    # Validate that left is really left of right and height is non-trivial.
+    if not (tl[0] < tr[0] and bl[0] < br[0]):
+        return None
+    if abs(float(bl[1] - tl[1])) < 4.0 and abs(float(br[1] - tr[1])) < 4.0:
+        return None
+
+    quad = np.array([tl, bl, br, tr], dtype=np.float32)
+    # Polygon area check for degeneracy
+    x = quad[:, 0]
+    y = quad[:, 1]
+    area2 = float(abs(np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1))))
+    if area2 < 50.0:
+        return None
+
+    return [
+        [int(round(tl[0])), int(round(tl[1]))],
+        [int(round(bl[0])), int(round(bl[1]))],
+        [int(round(br[0])), int(round(br[1]))],
+        [int(round(tr[0])), int(round(tr[1]))],
+    ]
+
+
 def _extract_wall_from_component(component_mask: np.ndarray) -> dict | None:
     """Extract corners + center from a single binary component mask."""
     contours, _ = cv2.findContours(component_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -438,11 +486,10 @@ def _extract_wall_from_component(component_mask: np.ndarray) -> dict | None:
     if cv2.contourArea(contour) < 100:
         return None
 
-    # Стабильный quad для гомографии (перспективного warp).
-    # Он не задаёт точную форму фасада, а только направление/перспективу наложения.
+    # Базовый fallback-quad (если перспективный из polygon невалиден).
     rect = cv2.minAreaRect(contour)
     box_pts = cv2.boxPoints(rect)
-    corners = _order_rect_corners_tl_bl_br_tr(box_pts)
+    corners_fallback = _order_rect_corners_tl_bl_br_tr(box_pts)
 
     # Контур компоненты для точного оверлея/клипа (маска области стены).
     # Возвращаем упрощённую ломаную через approxPolyDP.
@@ -453,7 +500,9 @@ def _extract_wall_from_component(component_mask: np.ndarray) -> dict | None:
     polygon = approx.reshape(-1, 2).astype(int).tolist()
     if len(polygon) < 3:
         # Fallback: хотя бы quad из minAreaRect.
-        polygon = corners
+        polygon = corners_fallback
+
+    corners = _corners_from_polygon_perspective(polygon) or corners_fallback
 
     M = cv2.moments(contour)
     if M["m00"] > 0:

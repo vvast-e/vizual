@@ -283,12 +283,6 @@ def _warp_texture_overlay_sync(
     W = int(image_width)
     H = int(image_height)
     tiled = _tile_texture_rgba(tex, W, H, texture_scale)
-    warped = np.zeros((H, W, 4), dtype=np.uint8)
-    mesh_mode = False
-    mesh_fallback = False
-    mesh_triangles = 0
-    mesh_bbox: tuple[int, int, int, int] | None = None
-
     use_polygon = bool(polygon) and len(polygon) >= 3
     poly_pts: np.ndarray | None = None
     if use_polygon:
@@ -297,72 +291,22 @@ def _warp_texture_overlay_sync(
         poly_pts[:, 1] = np.clip(poly_pts[:, 1], 0, H - 1)
         poly_pts = _sanitize_polygon_points(poly_pts)
 
-    if use_polygon and poly_pts is not None and len(poly_pts) >= 3:
-        try:
-            min_x = int(max(0, np.floor(np.min(poly_pts[:, 0]))))
-            max_x = int(min(W - 1, np.ceil(np.max(poly_pts[:, 0]))))
-            min_y = int(max(0, np.floor(np.min(poly_pts[:, 1]))))
-            max_y = int(min(H - 1, np.ceil(np.max(poly_pts[:, 1]))))
-            bw = max_x - min_x + 1
-            bh = max_y - min_y + 1
-            mesh_bbox = (min_x, min_y, max_x, max_y)
-            if bw >= 2 and bh >= 2:
-                local_poly = poly_pts.copy()
-                local_poly[:, 0] -= float(min_x)
-                local_poly[:, 1] -= float(min_y)
-                triangles = _triangulate_polygon_ear_clip(local_poly)
-                if triangles:
-                    ccw = _polygon_area_signed(local_poly) > 0
-                    src_poly = _sample_rect_perimeter_points(bw, bh, len(local_poly), ccw=ccw)
-                    src_local = _tile_texture_rgba(tex, bw, bh, texture_scale)
-                    dst_local = np.zeros((bh, bw, 4), dtype=np.uint8)
-                    for i0, i1, i2 in triangles:
-                        src_tri = np.array([src_poly[i0], src_poly[i1], src_poly[i2]], dtype=np.float32)
-                        dst_tri = np.array([local_poly[i0], local_poly[i1], local_poly[i2]], dtype=np.float32)
-                        _warp_triangle_affine(src_local, dst_local, src_tri, dst_tri)
-                    warped[min_y : max_y + 1, min_x : max_x + 1] = dst_local
-                    mesh_mode = True
-                    mesh_triangles = len(triangles)
-                else:
-                    mesh_fallback = True
-            else:
-                mesh_fallback = True
-        except Exception as mesh_err:
-            mesh_fallback = True
-            print(f"[warp-debug] mesh failed: {mesh_err}")
-
     dst_pts_raw = np.array(corners, dtype=np.float32).reshape(4, 2)
     dst_pts = _order_points_tl_tr_br_bl(dst_pts_raw)
 
-    if not mesh_mode:
-        src_pts = np.array([[0, 0], [W - 1, 0], [W - 1, H - 1], [0, H - 1]], dtype=np.float32)
-        M = cv2.getPerspectiveTransform(src_pts, dst_pts)
-        try:
-            det2 = float(np.linalg.det(M[:2, :2]))
-        except Exception:
-            det2 = float("nan")
-        print(
-            "[warp-debug] perspective "
-            f"src={src_pts.tolist()} "
-            f"dst_raw={np.round(dst_pts_raw, 2).tolist()} "
-            f"dst_ord={np.round(dst_pts, 2).tolist()} "
-            f"det2={det2:.6f}"
-        )
-        warped = cv2.warpPerspective(
-            tiled,
-            M,
-            dsize=(W, H),
-            flags=cv2.INTER_LINEAR,
-            borderMode=cv2.BORDER_CONSTANT,
-            borderValue=(0, 0, 0, 0),
-        )
-    else:
-        print(
-            "[warp-debug] mesh "
-            f"mode=1 triangles={mesh_triangles} "
-            f"bbox={mesh_bbox} fallback={int(mesh_fallback)}"
-        )
-
+    src_pts = np.array([[0, 0], [W - 1, 0], [W - 1, H - 1], [0, H - 1]], dtype=np.float32)
+    M = cv2.getPerspectiveTransform(src_pts, dst_pts)
+    try:
+        det2 = float(np.linalg.det(M[:2, :2]))
+    except Exception:
+        det2 = float("nan")
+    print(
+        "[warp-debug] perspective "
+        f"src={src_pts.tolist()} "
+        f"dst_raw={np.round(dst_pts_raw, 2).tolist()} "
+        f"dst_ord={np.round(dst_pts, 2).tolist()} "
+        f"det2={det2:.6f}"
+    )
     mask = np.zeros((H, W), dtype=np.uint8)
     if use_polygon and poly_pts is not None and len(poly_pts) >= 3:
         cv2.fillPoly(mask, [poly_pts.astype(np.int32)], 255)
@@ -385,11 +329,66 @@ def _warp_texture_overlay_sync(
             "[warp-debug] quad-mask "
             f"bbox=({dminx:.1f},{dminy:.1f})-({dmaxx:.1f},{dmaxy:.1f})"
         )
-    if mesh_mode:
-        print("[warp-debug] mesh fallback=0")
-    elif mesh_fallback:
-        print("[warp-debug] mesh fallback=1 -> quad perspective used")
 
+    warped: np.ndarray
+    if use_polygon and poly_pts is not None and len(poly_pts) >= 3:
+        # Inverse UV mapping: perspective from corners, full fill inside polygon.
+        warped = np.zeros((H, W, 4), dtype=np.uint8)
+        try:
+            M_inv = np.linalg.inv(M)
+            ys, xs = np.where(mask > 0)
+            if xs.size > 0:
+                ones = np.ones_like(xs, dtype=np.float64)
+                pts = np.stack([xs.astype(np.float64), ys.astype(np.float64), ones], axis=0)
+                src = M_inv @ pts
+                wv = src[2]
+                valid = np.abs(wv) > 1e-8
+                sx = np.zeros_like(wv)
+                sy = np.zeros_like(wv)
+                sx[valid] = src[0][valid] / wv[valid]
+                sy[valid] = src[1][valid] / wv[valid]
+
+                # Repeat texture coordinates to cover polygon outside projected quad.
+                sx = np.mod(sx, float(W))
+                sy = np.mod(sy, float(H))
+
+                x0 = np.floor(sx).astype(np.int32)
+                y0 = np.floor(sy).astype(np.int32)
+                x1 = (x0 + 1) % W
+                y1 = (y0 + 1) % H
+                fx = (sx - x0).astype(np.float32)
+                fy = (sy - y0).astype(np.float32)
+                wa = ((1.0 - fx) * (1.0 - fy))[:, None]
+                wb = (fx * (1.0 - fy))[:, None]
+                wc = ((1.0 - fx) * fy)[:, None]
+                wd = (fx * fy)[:, None]
+
+                s00 = tiled[y0, x0].astype(np.float32)
+                s10 = tiled[y0, x1].astype(np.float32)
+                s01 = tiled[y1, x0].astype(np.float32)
+                s11 = tiled[y1, x1].astype(np.float32)
+                sampled = (wa * s00 + wb * s10 + wc * s01 + wd * s11).clip(0, 255).astype(np.uint8)
+                warped[ys, xs] = sampled
+            print(f"[warp-debug] mode=inv_uv_polygon pixels={int(xs.size)}")
+        except Exception as inv_err:
+            print(f"[warp-debug] inv_uv failed, fallback quad warp: {inv_err}")
+            warped = cv2.warpPerspective(
+                tiled,
+                M,
+                dsize=(W, H),
+                flags=cv2.INTER_LINEAR,
+                borderMode=cv2.BORDER_CONSTANT,
+                borderValue=(0, 0, 0, 0),
+            )
+    else:
+        warped = cv2.warpPerspective(
+            tiled,
+            M,
+            dsize=(W, H),
+            flags=cv2.INTER_LINEAR,
+            borderMode=cv2.BORDER_CONSTANT,
+            borderValue=(0, 0, 0, 0),
+        )
     safe_opacity = float(max(0.0, min(1.0, opacity)))
     alpha = (mask.astype(np.float32) / 255.0) * safe_opacity
     warped_alpha = warped[:, :, 3].astype(np.float32) / 255.0
