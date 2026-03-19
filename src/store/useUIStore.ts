@@ -15,6 +15,8 @@ interface UIState {
   hideWallMasks: boolean
   /** Режим сцены: интерьер или экстерьер */
   sceneMode: SceneMode
+  /** Режим "Разделить фасад": два клика задают линию разреза */
+  splitFacadeMode: boolean
   setMaterialCatalogOpen: (open: boolean) => void
   setExportModalOpen: (open: boolean) => void
   setActiveToolbarPanel: (panel: string | null) => void
@@ -22,6 +24,7 @@ interface UIState {
   setEditWallCorners: (v: boolean) => void
   setHideWallMasks: (v: boolean) => void
   setSceneMode: (mode: SceneMode) => void
+  setSplitFacadeMode: (v: boolean) => void
 }
 
 export const useUIStore = create<UIState>((set) => ({
@@ -32,6 +35,7 @@ export const useUIStore = create<UIState>((set) => ({
   editWallCorners: false,
   hideWallMasks: false,
   sceneMode: 'interior',
+  splitFacadeMode: false,
   setMaterialCatalogOpen: (materialCatalogOpen) => set({ materialCatalogOpen }),
   setExportModalOpen: (exportModalOpen) => set({ exportModalOpen }),
   setActiveToolbarPanel: (activeToolbarPanel) => set({ activeToolbarPanel }),
@@ -39,4 +43,5 @@ export const useUIStore = create<UIState>((set) => ({
   setEditWallCorners: (editWallCorners) => set({ editWallCorners }),
   setHideWallMasks: (hideWallMasks) => set({ hideWallMasks }),
   setSceneMode: (sceneMode) => set({ sceneMode }),
+  setSplitFacadeMode: (splitFacadeMode) => set({ splitFacadeMode }),
 }))

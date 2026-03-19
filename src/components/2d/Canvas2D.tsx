@@ -5,7 +5,7 @@ import { useVisualizerStore } from '@/store/useVisualizerStore'
 import { useMaterialStore } from '@/store/useMaterialStore'
 import { useUIStore } from '@/store/useUIStore'
 import { useWallStore } from '@/store/useWallStore'
-import { detectWalls, detectExterior } from '@/hooks/useWallDetection'
+import { detectWalls, detectExterior, splitExteriorWalls } from '@/hooks/useWallDetection'
 import { PhotoUploader } from './PhotoUploader'
 import { MaskEditor } from './MaskEditor'
 import { defaultExportFilename } from '@/lib/export-utils'
@@ -41,6 +41,24 @@ export function Canvas2D({
   const setDetecting = useWallStore((s) => s.setDetecting)
   const setWallTexture = useWallStore((s) => s.setWallTexture)
   const wallTextures = useWallStore((s) => s.wallTextures)
+  const exteriorMaskBase64 = useWallStore((s) => s.exteriorMaskBase64)
+  const setExteriorMaskBase64 = useWallStore((s) => s.setExteriorMaskBase64)
+
+  const splitFacadeMode = useUIStore((s) => s.splitFacadeMode)
+  const setSplitFacadeMode = useUIStore((s) => s.setSplitFacadeMode)
+
+  const handleSplitLineComplete = useCallback(
+    (p1: { x: number; y: number }, p2: { x: number; y: number }) => {
+      const mask = exteriorMaskBase64
+      if (!mask || !wallImageSize) return
+      splitExteriorWalls(mask, p1.x, p1.y, p2.x, p2.y, wallImageSize.width, wallImageSize.height)
+        .then((res) => {
+          setWalls(res.walls, wallImageSize)
+        })
+        .catch((err) => console.error('[Canvas2D] splitExteriorWalls failed', err))
+    },
+    [exteriorMaskBase64, wallImageSize, setWalls]
+  )
 
   const {
     isReady,
@@ -67,6 +85,7 @@ export function Canvas2D({
     canvasRef,
     containerWidth: width,
     containerHeight: height,
+    onSplitLineComplete: handleSplitLineComplete,
   })
 
   const { exportToPng: downloadPng } = useExport()
@@ -219,6 +238,7 @@ export function Canvas2D({
                         wallsCount: res.walls?.length ?? 0,
                       })
                       setWalls(res.walls ?? [], res.image_size)
+                      setExteriorMaskBase64(res.masks?.wall_minus_holes ?? null)
                       setExteriorMaskOverlay(res.masks?.wall_minus_holes ?? null, res.image_size)
                     })
                     .catch((err) => {
@@ -227,6 +247,7 @@ export function Canvas2D({
                     .finally(() => setDetecting(false))
                 } else {
                   setExteriorMaskOverlay(null, null)
+                  setExteriorMaskBase64(null)
                   detectWalls(file)
                     .then((res) => {
                       // eslint-disable-next-line no-console
@@ -273,6 +294,17 @@ export function Canvas2D({
             >
               Наложить текстуру
             </button>
+            {sceneMode === 'exterior' && (
+              <button
+                type="button"
+                onClick={() => setSplitFacadeMode(!splitFacadeMode)}
+                className={`rounded border px-3 py-1.5 text-sm ${
+                  splitFacadeMode ? 'border-rose-700 bg-rose-50 text-rose-800' : 'border-gray-300 text-gray-700 hover:bg-gray-100'
+                }`}
+              >
+                Разделить фасад
+              </button>
+            )}
             <button
               type="button"
               onClick={() => setEditWallCorners(!editWallCorners)}

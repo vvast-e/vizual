@@ -201,19 +201,27 @@ export async function renderPerspectiveWallTexture(
   corners: [number, number][],
   canvasWidth: number,
   canvasHeight: number,
-  textureScale: number = 0.25
-): Promise<{ canvas: HTMLCanvasElement; offsetX: number; offsetY: number; localCorners: [number, number][] }> {
+  textureScale: number = 0.25,
+  polygon?: [number, number][]
+): Promise<{
+  canvas: HTMLCanvasElement
+  offsetX: number
+  offsetY: number
+  localCorners: [number, number][]
+  localPolygon?: [number, number][]
+}> {
   const img = await loadTextureImage(textureUrl)
   if (corners.length < 4) {
     const empty = document.createElement('canvas')
     empty.width = Math.max(1, canvasWidth)
     empty.height = Math.max(1, canvasHeight)
-    return { canvas: empty, offsetX: 0, offsetY: 0, localCorners: [] }
+    return { canvas: empty, offsetX: 0, offsetY: 0, localCorners: [], localPolygon: [] }
   }
 
+  const pointsForBBox = polygon && polygon.length >= 3 ? polygon : corners
   // --- FIX: srcCanvas размера bbox стены ---
-  const xs = corners.map((c) => c[0])
-  const ys = corners.map((c) => c[1])
+  const xs = pointsForBBox.map((c) => c[0])
+  const ys = pointsForBBox.map((c) => c[1])
   const minX = Math.min(...xs)
   const maxX = Math.max(...xs)
   const minY = Math.min(...ys)
@@ -222,6 +230,10 @@ export async function renderPerspectiveWallTexture(
   const bboxH = Math.max(1, Math.ceil(maxY - minY))
   const srcCanvas = createPatternCanvas(img, 'repeat', bboxW, bboxH)
   const localCorners = corners.map(([x, y]) => [x - minX, y - minY] as [number, number])
+  const localPolygon = (polygon && polygon.length >= 3
+    ? polygon
+    : corners
+  ).map(([x, y]) => [x - minX, y - minY] as [number, number])
 
   // offscreen canvas размера bbox
   const offscreen = document.createElement('canvas')
@@ -229,7 +241,7 @@ export async function renderPerspectiveWallTexture(
   offscreen.height = bboxH
   const ctx = offscreen.getContext('2d')
   if (!ctx) {
-    return { canvas: offscreen, offsetX: minX, offsetY: minY, localCorners }
+    return { canvas: offscreen, offsetX: minX, offsetY: minY, localCorners, localPolygon }
   }
 
   // Рисуем перспективу без perspectivejs: разбиваем quad на 2 треугольника.
@@ -262,7 +274,7 @@ export async function renderPerspectiveWallTexture(
     tr[0], tr[1]
   )
 
-  return { canvas: offscreen, offsetX: minX, offsetY: minY, localCorners }
+  return { canvas: offscreen, offsetX: minX, offsetY: minY, localCorners, localPolygon }
 }
 
 export { textureCache }

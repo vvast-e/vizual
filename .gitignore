@@ -70,5 +70,8 @@ dist-ssr
 *.onnx
 warp-debug/
 
+# Exterior debug outputs
+exterior-debug/
+
 # HuggingFace cache (model weights auto-downloaded by transformers)
 .cache/huggingface/

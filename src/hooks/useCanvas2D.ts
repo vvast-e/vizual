@@ -15,12 +15,15 @@ export interface UseCanvas2DOptions {
   canvasRef: React.RefObject<HTMLCanvasElement | null>
   containerWidth?: number
   containerHeight?: number
+  /** Вызывается при двух кликах в режиме "Разделить фасад". Координаты уже в image_size. */
+  onSplitLineComplete?: (p1: { x: number; y: number }, p2: { x: number; y: number }) => void
 }
 
 export function useCanvas2D({
   canvasRef,
   containerWidth = 800,
   containerHeight = 600,
+  onSplitLineComplete,
 }: UseCanvas2DOptions) {
   const canvasInstanceRef = useRef<Canvas | null>(null)
   const [isReady, setIsReady] = useState(false)
@@ -49,6 +52,14 @@ export function useCanvas2D({
   const CORNER_HANDLE_DATA_KEY = 'cornerHandle'
   const exteriorMaskRef = useRef<FabricObject | null>(null)
   const EXTERIOR_MASK_DATA_KEY = 'isExteriorMask'
+
+  const splitFacadeMode = useUIStore((s) => s.splitFacadeMode)
+  const splitFacadeModeRef = useRef(splitFacadeMode)
+  splitFacadeModeRef.current = splitFacadeMode
+  const splitPendingPointRef = useRef<{ x: number; y: number } | null>(null)
+  const splitLinePreviewRef = useRef<Path | null>(null)
+  const onSplitLineCompleteRef = useRef(onSplitLineComplete)
+  onSplitLineCompleteRef.current = onSplitLineComplete
 
   const initCanvas = useCallback(() => {
     const el = canvasRef.current
@@ -88,6 +99,45 @@ export function useCanvas2D({
     }
 
     canvas.on('mouse:down', (opt) => {
+      const scenePoint = canvas.getScenePoint(opt.e as MouseEvent)
+
+      if (splitFacadeModeRef.current && useUIStore.getState().sceneMode === 'exterior') {
+        const cb = onSplitLineCompleteRef.current
+        if (!cb) return
+        const pending = splitPendingPointRef.current
+        if (!pending) {
+          splitPendingPointRef.current = { x: scenePoint.x, y: scenePoint.y }
+          return
+        }
+        const bg = backgroundImageRef.current
+        const bounds =
+          bg && typeof (bg as unknown as { getBoundingRect?: () => { left: number; top: number; width: number; height: number } }).getBoundingRect === 'function'
+            ? (bg as unknown as { getBoundingRect: () => { left: number; top: number; width: number; height: number } }).getBoundingRect()
+            : null
+        const { wallImageSize } = useWallStore.getState()
+        if (bounds && wallImageSize) {
+          const scaleX = bounds.width / wallImageSize.width
+          const scaleY = bounds.height / wallImageSize.height
+          const imgP1 = {
+            x: (pending.x - bounds.left) / scaleX,
+            y: (pending.y - bounds.top) / scaleY,
+          }
+          const imgP2 = {
+            x: (scenePoint.x - bounds.left) / scaleX,
+            y: (scenePoint.y - bounds.top) / scaleY,
+          }
+          cb(imgP1, imgP2)
+        }
+        splitPendingPointRef.current = null
+        if (splitLinePreviewRef.current) {
+          canvas.remove(splitLinePreviewRef.current)
+          splitLinePreviewRef.current = null
+        }
+        useUIStore.getState().setSplitFacadeMode(false)
+        canvas.requestRenderAll()
+        return
+      }
+
       const target = (opt as unknown as { target?: FabricObject | null }).target
       const data = target ? (target as unknown as { data?: Record<string, unknown> }).data : undefined
       if (data && typeof data[WALL_BUTTON_DATA_KEY] === 'number') {
@@ -96,7 +146,6 @@ export function useCanvas2D({
       }
 
       const tool = maskToolRef.current
-      const scenePoint = canvas.getScenePoint(opt.e as MouseEvent)
       const point = new Point(scenePoint.x, scenePoint.y)
 
       if (!target && wallOverlaysRef.current.length > 0) {
@@ -132,6 +181,23 @@ export function useCanvas2D({
     canvas.on('mouse:move', (opt) => {
       const tool = maskToolRef.current
       const scenePoint = canvas.getScenePoint(opt.e as MouseEvent)
+
+      if (splitFacadeModeRef.current && splitPendingPointRef.current) {
+        const p1 = splitPendingPointRef.current
+        if (splitLinePreviewRef.current) canvas.remove(splitLinePreviewRef.current)
+        const d = `M ${p1.x} ${p1.y} L ${scenePoint.x} ${scenePoint.y}`
+        const preview = new Path(d, {
+          stroke: '#e11d48',
+          strokeWidth: 2,
+          strokeDashArray: [8, 4],
+          selectable: false,
+          evented: false,
+        })
+        canvas.add(preview)
+        splitLinePreviewRef.current = preview
+        canvas.requestRenderAll()
+        return
+      }
 
       if (tool === 'rect' && rectStartRef.current) {
         const center = rectStartRef.current
@@ -260,6 +326,18 @@ export function useCanvas2D({
     }
   }, [initCanvas])
 
+  useEffect(() => {
+    if (!splitFacadeMode) {
+      splitPendingPointRef.current = null
+      const canvas = canvasInstanceRef.current
+      if (splitLinePreviewRef.current && canvas) {
+        canvas.remove(splitLinePreviewRef.current)
+        splitLinePreviewRef.current = null
+        canvas.requestRenderAll()
+      }
+    }
+  }, [splitFacadeMode])
+
   const loadPhotoFromDataUrl = useCallback(async (dataUrl: string) => {
     const canvas = canvasInstanceRef.current
     if (!canvas) return
@@ -377,9 +455,47 @@ export function useCanvas2D({
 
   const getBackgroundBounds = useCallback((): { left: number; top: number; width: number; height: number } | null => {
     const bg = backgroundImageRef.current
-    if (!bg || typeof (bg as unknown as { getBoundingRect?: () => { left: number; top: number; width: number; height: number } }).getBoundingRect !== 'function') return null
-    const rect = (bg as unknown as { getBoundingRect: () => { left: number; top: number; width: number; height: number } }).getBoundingRect()
-    return { left: rect.left, top: rect.top, width: rect.width, height: rect.height }
+    if (!bg) return null
+    const left = (bg.left ?? 0) as number
+    const top = (bg.top ?? 0) as number
+    const baseW = (bg.width ?? 0) as number
+    const baseH = (bg.height ?? 0) as number
+    const sx = (bg.scaleX ?? 1) as number
+    const sy = (bg.scaleY ?? 1) as number
+    const width = baseW * sx
+    const height = baseH * sy
+    if (width <= 0 || height <= 0) return null
+    return { left, top, width, height }
+  }, [])
+
+  const getBackgroundTransform = useCallback((): {
+    left: number
+    top: number
+    scaleX: number
+    scaleY: number
+    originX: 'left' | 'center' | 'right'
+    originY: 'top' | 'center' | 'bottom'
+    angle: number
+    skewX: number
+    skewY: number
+    flipX: boolean
+    flipY: boolean
+  } | null => {
+    const bg = backgroundImageRef.current
+    if (!bg) return null
+    return {
+      left: (bg.left ?? 0) as number,
+      top: (bg.top ?? 0) as number,
+      scaleX: (bg.scaleX ?? 1) as number,
+      scaleY: (bg.scaleY ?? 1) as number,
+      originX: ((bg.originX ?? 'left') as 'left' | 'center' | 'right'),
+      originY: ((bg.originY ?? 'top') as 'top' | 'center' | 'bottom'),
+      angle: (bg.angle ?? 0) as number,
+      skewX: (bg.skewX ?? 0) as number,
+      skewY: (bg.skewY ?? 0) as number,
+      flipX: Boolean(bg.flipX),
+      flipY: Boolean(bg.flipY),
+    }
   }, [])
 
   const setExteriorMaskOverlay = useCallback(
@@ -397,8 +513,8 @@ export function useCanvas2D({
         return
       }
 
-      const bounds = getBackgroundBounds()
-      if (!bounds) return
+      const bgTx = getBackgroundTransform()
+      if (!bgTx) return
 
       const dataUrl = `data:image/png;base64,${maskBase64Png}`
       const img = await FabricImage.fromURL(dataUrl)
@@ -407,12 +523,17 @@ export function useCanvas2D({
       if (w <= 0 || h <= 0) return
 
       img.set({
-        left: bounds.left,
-        top: bounds.top,
-        originX: 'left',
-        originY: 'top',
-        scaleX: bounds.width / imageSize.width,
-        scaleY: bounds.height / imageSize.height,
+        left: bgTx.left,
+        top: bgTx.top,
+        originX: bgTx.originX,
+        originY: bgTx.originY,
+        scaleX: bgTx.scaleX,
+        scaleY: bgTx.scaleY,
+        angle: bgTx.angle,
+        skewX: bgTx.skewX,
+        skewY: bgTx.skewY,
+        flipX: bgTx.flipX,
+        flipY: bgTx.flipY,
         selectable: false,
         evented: false,
         opacity: 0.35,
@@ -427,7 +548,7 @@ export function useCanvas2D({
       exteriorMaskRef.current = img
       canvas.requestRenderAll()
     },
-    [getBackgroundBounds]
+    [getBackgroundTransform]
   )
 
   const setWallOverlays = useCallback(
@@ -447,11 +568,15 @@ export function useCanvas2D({
       if (!bounds) return
       const scaleX = bounds.width / wallImageSize.width
       const scaleY = bounds.height / wallImageSize.height
+      const hideWallMasks = useUIStore.getState().hideWallMasks
       for (const wall of walls) {
         // многоугольник стены поверх фото, чтобы было видно реальную форму
-        if (wall.corners.length >= 3) {
+        const overlayPoly =
+          wall.polygon && wall.polygon.length >= 3 ? wall.polygon : wall.corners
+        // Показываем синие маски и в интерьере, и в экстерьере (если не скрыты).
+        if (!hideWallMasks && overlayPoly.length >= 3) {
           const d =
-            wall.corners
+            overlayPoly
               .map((c, i) => {
                 const x = bounds.left + c[0] * scaleX
                 const y = bounds.top + c[1] * scaleY
@@ -521,11 +646,8 @@ export function useCanvas2D({
         }
       }
       let sceneBounds: { left: number; top: number; width: number; height: number } | undefined
-      const bg = backgroundImageRef.current
-      if (bg && typeof (bg as unknown as { getBoundingRect?: () => { left: number; top: number; width: number; height: number } }).getBoundingRect === 'function') {
-        const rect = (bg as unknown as { getBoundingRect: () => { left: number; top: number; width: number; height: number } }).getBoundingRect()
-        sceneBounds = { left: rect.left, top: rect.top, width: rect.width, height: rect.height }
-      }
+      const bgBounds = getBackgroundBounds()
+      if (bgBounds) sceneBounds = bgBounds
       const layer = await applyPatternToCanvas(
         canvas,
         textureUrl,
@@ -537,26 +659,85 @@ export function useCanvas2D({
       textureLayerRef.current = layer
       setHasTextureLayer(true)
     },
-    [getMaskObjects, textureScale]
+    [getMaskObjects, textureScale, getBackgroundBounds]
   )
 
   const applyTextureToWall = useCallback(
-    async (textureUrl: string, wallCorners: [number, number][]) => {
+    async (
+      textureUrl: string,
+      wallCorners: [number, number][],
+      _wallImageSize: { width: number; height: number } | null,
+      selectedWallId: number | null
+    ) => {
       const canvas = canvasInstanceRef.current;
       if (!canvas) return;
       if (textureLayerRef.current) {
         canvas.remove(textureLayerRef.current);
         textureLayerRef.current = null;
       }
+      const sceneMode = useUIStore.getState().sceneMode
+      const wall = selectedWallId != null ? useWallStore.getState().walls.find((w) => w.id === selectedWallId) : null
+      const wallPolygon = wall?.polygon && wall.polygon.length >= 3 ? wall.polygon : undefined
+
+      // В экстерьере делаем варп+клип на бэкенде по polygon.
+      if (sceneMode === 'exterior' && wallPolygon && _wallImageSize) {
+        const bgTx = getBackgroundTransform()
+        if (!bgTx) return
+
+        const { warpWallTexture } = await import('@/hooks/warpWallTexture')
+        const blob = await warpWallTexture({
+          textureUrl,
+          corners: wallCorners,
+          polygon: wallPolygon,
+          imageSize: _wallImageSize,
+          textureScale,
+          opacity: 0.85,
+        })
+
+        const img = new Image()
+        const objectUrl = URL.createObjectURL(blob)
+        img.src = objectUrl
+        await new Promise((resolve, reject) => {
+          img.onload = () => resolve(true)
+          img.onerror = () => reject(new Error('Failed to load warped texture blob'))
+        })
+        URL.revokeObjectURL(objectUrl)
+
+        const fabricImg = new FabricImage(img, {
+          left: bgTx.left,
+          top: bgTx.top,
+          selectable: false,
+          evented: false,
+          opacity: 1,
+          originX: bgTx.originX,
+          originY: bgTx.originY,
+          scaleX: bgTx.scaleX,
+          scaleY: bgTx.scaleY,
+          angle: bgTx.angle,
+          skewX: bgTx.skewX,
+          skewY: bgTx.skewY,
+          flipX: bgTx.flipX,
+          flipY: bgTx.flipY,
+        })
+
+        canvas.add(fabricImg)
+        textureLayerRef.current = fabricImg
+        setHasTextureLayer(true)
+        canvas.requestRenderAll()
+        return
+      }
+
       const { renderPerspectiveWallTexture } = await import('@/lib/texture-processor');
+
       const width = canvas.getWidth() ?? containerWidth;
       const height = canvas.getHeight() ?? containerHeight;
-      const { canvas: textureCanvas, offsetX, offsetY } = await renderPerspectiveWallTexture(
+      const { canvas: textureCanvas, offsetX, offsetY, localCorners, localPolygon } = await renderPerspectiveWallTexture(
         textureUrl,
         wallCorners,
         width,
         height,
-        textureScale
+        textureScale,
+        wallPolygon
       );
       const img = new Image();
       img.src = textureCanvas.toDataURL();
@@ -568,16 +749,11 @@ export function useCanvas2D({
         evented: false,
         opacity: 0.85,
       });
-      // ClipPath по локальным координатам (localCorners)
-      const { localCorners } = await renderPerspectiveWallTexture(
-        textureUrl,
-        wallCorners,
-        width,
-        height,
-        textureScale
-      );
+
+      // ClipPath по локальным координатам (origin = offsetX/offsetY offscreen canvas).
+      const clipPoints = localPolygon && localPolygon.length >= 3 ? localPolygon : localCorners
       const clipPath = new Path(
-        localCorners
+        clipPoints
           .map((p, i) => (i === 0 ? `M ${p[0]} ${p[1]}` : `L ${p[0]} ${p[1]}`))
           .join(' ') + ' Z',
         { selectable: false, evented: false }
@@ -588,7 +764,7 @@ export function useCanvas2D({
       setHasTextureLayer(true);
       canvas.requestRenderAll();
     },
-    [containerWidth, containerHeight, textureScale]
+    [containerWidth, containerHeight, textureScale, getBackgroundTransform]
   )
 
   const highlightSelectedWall = useCallback((selectedId: number | null) => {

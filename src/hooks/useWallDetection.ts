@@ -70,3 +70,45 @@ export async function detectExterior(photoFile: File): Promise<DetectExteriorRes
   }
   return data
 }
+
+export interface SplitExteriorResponse {
+  walls: import('@/store/useWallStore').WallData[]
+}
+
+/**
+ * Разделить фасад маской по линии (два клика). Координаты в image_size.
+ */
+export async function splitExteriorWalls(
+  maskBase64: string,
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  imageWidth: number,
+  imageHeight: number
+): Promise<SplitExteriorResponse> {
+  const formData = new FormData()
+  formData.append('mask_base64', maskBase64)
+  formData.append('x1', String(x1))
+  formData.append('y1', String(y1))
+  formData.append('x2', String(x2))
+  formData.append('y2', String(y2))
+  formData.append('image_width', String(imageWidth))
+  formData.append('image_height', String(imageHeight))
+
+  const res = await fetch('/api/exterior/split', {
+    method: 'POST',
+    body: formData,
+  })
+
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(text || `HTTP ${res.status}`)
+  }
+
+  const data = (await res.json()) as SplitExteriorResponse
+  if (!data.walls || !Array.isArray(data.walls)) {
+    throw new Error('Invalid response: walls required')
+  }
+  return data
+}

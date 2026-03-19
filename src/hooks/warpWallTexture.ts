@@ -1,6 +1,7 @@
 export interface WarpWallTextureArgs {
   textureUrl: string
   corners: [number, number][]
+  polygon?: [number, number][]
   imageSize: { width: number; height: number }
   textureScale: number
   opacity?: number
@@ -9,6 +10,7 @@ export interface WarpWallTextureArgs {
 export async function warpWallTexture({
   textureUrl,
   corners,
+  polygon,
   imageSize,
   textureScale,
   opacity = 0.85,
@@ -20,6 +22,9 @@ export async function warpWallTexture({
   const form = new FormData()
   form.append('texture', texBlob, 'texture.png')
   form.append('corners', JSON.stringify(corners))
+  if (polygon && polygon.length >= 3) {
+    form.append('polygon', JSON.stringify(polygon))
+  }
   form.append('image_width', String(imageSize.width))
   form.append('image_height', String(imageSize.height))
   form.append('texture_scale', String(textureScale))
