@@ -1,19 +1,27 @@
+import type { WallWarpRegion } from '@/store/useWallStore'
+
 export interface WarpWallTextureArgs {
   textureUrl: string
   corners: [number, number][]
   polygon?: [number, number][]
+  /** Два региона с бэкенда (нижний quad + верхний треугольник/quad). */
+  regions?: WallWarpRegion[]
   imageSize: { width: number; height: number }
   textureScale: number
   opacity?: number
+  /** Растровая маска (Base64 PNG) с вырезанными окнами/дверьми */
+  maskBase64?: string | null
 }
 
 export async function warpWallTexture({
   textureUrl,
   corners,
   polygon,
+  regions,
   imageSize,
   textureScale,
   opacity = 0.85,
+  maskBase64,
 }: WarpWallTextureArgs): Promise<Blob> {
   const texRes = await fetch(textureUrl)
   if (!texRes.ok) throw new Error(`Texture fetch failed: HTTP ${texRes.status}`)
@@ -24,6 +32,12 @@ export async function warpWallTexture({
   form.append('corners', JSON.stringify(corners))
   if (polygon && polygon.length >= 3) {
     form.append('polygon', JSON.stringify(polygon))
+  }
+  if (regions && regions.length === 2) {
+    form.append('regions', JSON.stringify(regions))
+  }
+  if (maskBase64) {
+    form.append('mask_base64', maskBase64)
   }
   form.append('image_width', String(imageSize.width))
   form.append('image_height', String(imageSize.height))

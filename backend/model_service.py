@@ -2,11 +2,20 @@
 Local model service: GroundingDINO (bbox) + SAM (mask refinement).
 Run: uvicorn model_service:app --port 8001
 Weights are downloaded automatically from HuggingFace on first run.
+
+Кэш Hugging Face: <корень репозитория>/models/huggingface/ (HF_HOME).
 """
 import io
 import json
 import os
 from contextlib import asynccontextmanager
+
+# До импорта transformers — иначе кэш уйдёт в ~/.cache/huggingface
+_BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
+_PROJECT_ROOT = os.path.abspath(os.path.join(_BACKEND_DIR, ".."))
+_HF_HOME = os.path.join(_PROJECT_ROOT, "models", "huggingface")
+os.makedirs(_HF_HOME, exist_ok=True)
+os.environ.setdefault("HF_HOME", _HF_HOME)
 
 import cv2
 import numpy as np
@@ -32,6 +41,7 @@ sam_processor = None
 def _load_all_models():
     global gdino_model, gdino_processor, sam_model, sam_processor
 
+    print(f"[model_service] HF_HOME={_HF_HOME}")
     print(f"[model_service] Loading GroundingDINO on {DEVICE}...")
     # ВАЖНО: отключаем fast-processor, чтобы не требовал GroundingDinoImageProcessorFast + torch>=2.4
     # На CPU с torch 2.0.1 используем медленный, но совместимый вариант.

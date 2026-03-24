@@ -13,6 +13,8 @@ import cv2
 import httpx
 import numpy as np
 
+from facade_geometry import split_gable_roof_polygon
+
 GDINO_URL = os.getenv("EXTERIOR_GDINO_URL", "http://127.0.0.1:8001/gdino")
 SAM_URL = os.getenv("EXTERIOR_SAM_URL", "http://127.0.0.1:8001/sam")
 TIMEOUT_S = int(os.getenv("EXTERIOR_TIMEOUT_MS", "30000")) / 1000.0
@@ -504,6 +506,26 @@ def _extract_wall_from_component(component_mask: np.ndarray) -> dict | None:
 
     corners = _corners_from_polygon_perspective(polygon) or corners_fallback
 
+    regions: list[dict] | None = None
+    if len(polygon) >= 5:
+        split_res = split_gable_roof_polygon(polygon)
+        if split_res is not None:
+            poly_lo, poly_up = split_res
+            corners_lo = _corners_from_polygon_perspective(poly_lo)
+            if corners_lo is None:
+                lp = np.array(poly_lo, dtype=np.float32).reshape(-1, 1, 2)
+                rect = cv2.minAreaRect(lp)
+                box = cv2.boxPoints(rect)
+                corners_lo = _order_rect_corners_tl_bl_br_tr(box)
+            tri = np.array(poly_up, dtype=np.float32).reshape(-1, 1, 2)
+            rect_u = cv2.minAreaRect(tri)
+            box_u = cv2.boxPoints(rect_u)
+            corners_up = _order_rect_corners_tl_bl_br_tr(box_u)
+            regions = [
+                {"corners": corners_lo, "polygon": poly_lo},
+                {"corners": corners_up, "polygon": poly_up},
+            ]
+
     M = cv2.moments(contour)
     if M["m00"] > 0:
         cx = M["m10"] / M["m00"]
@@ -512,11 +534,14 @@ def _extract_wall_from_component(component_mask: np.ndarray) -> dict | None:
         cx = float(np.mean([c[0] for c in corners]))
         cy = float(np.mean([c[1] for c in corners]))
 
-    return {
+    out: dict = {
         "corners": corners,
         "polygon": polygon,
         "center": [round(cx, 2), round(cy, 2)],
     }
+    if regions is not None:
+        out["regions"] = regions
+    return out
 
 
 def _watershed_split(mask: np.ndarray, max_segments: int = EXTERIOR_MAX_WALLS) -> list[np.ndarray]:
@@ -613,12 +638,15 @@ def split_walls_from_mask(
 
     walls: list[dict] = []
     for idx, w in enumerate(raw_walls):
-        walls.append({
+        item: dict = {
             "id": idx + 1,
             "corners": w["corners"],
             "polygon": w.get("polygon"),
             "center": w["center"],
-        })
+        }
+        if w.get("regions"):
+            item["regions"] = w["regions"]
+        walls.append(item)
 
     return walls
 
@@ -669,12 +697,15 @@ def split_exterior_by_line(
     raw_walls.sort(key=lambda w: w["center"][0])
     walls: list[dict] = []
     for idx, w in enumerate(raw_walls):
-        walls.append({
+        item: dict = {
             "id": idx + 1,
             "corners": w["corners"],
             "polygon": w.get("polygon"),
             "center": w["center"],
-        })
+        }
+        if w.get("regions"):
+            item["regions"] = w["regions"]
+        walls.append(item)
     return walls
 
 
@@ -707,12 +738,15 @@ def _build_walls_from_component_masks(component_masks: list[np.ndarray]) -> list
     raw_walls.sort(key=lambda w: w["center"][0])
     walls: list[dict] = []
     for idx, w in enumerate(raw_walls):
-        walls.append({
+        item: dict = {
             "id": idx + 1,
             "corners": w["corners"],
             "polygon": w.get("polygon"),
             "center": w["center"],
-        })
+        }
+        if w.get("regions"):
+            item["regions"] = w["regions"]
+        walls.append(item)
     return walls
 
 

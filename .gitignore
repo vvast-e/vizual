@@ -71,7 +71,9 @@ dist-ssr
 warp-debug/
 
 # Exterior debug outputs
-exterior-debug/
+exterior-debug/ 
 
 # HuggingFace cache (model weights auto-downloaded by transformers)
 .cache/huggingface/
+# HF cache в корне репозитория (model_service.py → models/huggingface)
+models/

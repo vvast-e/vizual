@@ -250,6 +250,162 @@ def _warp_triangle_affine(
     dst_rgba[r2[1] : r2[1] + r2[3], r2[0] : r2[0] + r2[2]] = np.clip(blended, 0, 255).astype(np.uint8)
 
 
+def _corners_from_polygon_auto(poly_pts: np.ndarray) -> np.ndarray:
+    """Derive 4 TL/TR/BR/BL guide corners from an N-point polygon via minAreaRect.
+
+    Used to auto-compute perspective direction when only a polygon is provided
+    (no explicit 4-corner quad).  Returns shape (4, 2) float32.
+    """
+    rect = cv2.minAreaRect(poly_pts.astype(np.float32))
+    box = cv2.boxPoints(rect).astype(np.float32)
+    return _order_points_tl_tr_br_bl(box)
+
+
+def _warp_region_inv_uv_rgba(
+    tiled: np.ndarray,
+    W: int,
+    H: int,
+    src_quad_tl_tr_br_bl: np.ndarray,
+    dst_pts_raw: np.ndarray,
+    region_mask: np.ndarray,
+) -> np.ndarray:
+    """
+    Inverse perspective sample from tiled texture into warped RGBA.
+    src_quad_tl_tr_br_bl: (4,2) float32 — TL, TR, BR, BL in texture pixel coords.
+    dst_pts_raw: (4,2) destination quad (any order, reordered internally).
+    Writes only pixels where region_mask > 0.
+    """
+    warped = np.zeros((H, W, 4), dtype=np.uint8)
+    dst_pts = _order_points_tl_tr_br_bl(dst_pts_raw.reshape(4, 2).astype(np.float32))
+    src_pts = src_quad_tl_tr_br_bl.reshape(4, 2).astype(np.float32)
+    M = cv2.getPerspectiveTransform(src_pts, dst_pts)
+    M_inv = np.linalg.inv(M)
+    ys, xs = np.where(region_mask > 0)
+    if xs.size == 0:
+        return warped
+    ones = np.ones_like(xs, dtype=np.float64)
+    pts_h = np.stack([xs.astype(np.float64), ys.astype(np.float64), ones], axis=0)
+    src = M_inv @ pts_h
+    wv = src[2]
+    valid = np.abs(wv) > 1e-8
+    sx = np.zeros_like(wv)
+    sy = np.zeros_like(wv)
+    sx[valid] = src[0][valid] / wv[valid]
+    sy[valid] = src[1][valid] / wv[valid]
+    sx = np.mod(sx, float(W))
+    sy = np.mod(sy, float(H))
+    x0 = np.floor(sx).astype(np.int32)
+    y0 = np.floor(sy).astype(np.int32)
+    x1 = (x0 + 1) % W
+    y1 = (y0 + 1) % H
+    fx = (sx - x0).astype(np.float32)
+    fy = (sy - y0).astype(np.float32)
+    wa = ((1.0 - fx) * (1.0 - fy))[:, None]
+    wb = (fx * (1.0 - fy))[:, None]
+    wc = ((1.0 - fx) * fy)[:, None]
+    wd = (fx * fy)[:, None]
+    s00 = tiled[y0, x0].astype(np.float32)
+    s10 = tiled[y0, x1].astype(np.float32)
+    s01 = tiled[y1, x0].astype(np.float32)
+    s11 = tiled[y1, x1].astype(np.float32)
+    sampled = (wa * s00 + wb * s10 + wc * s01 + wd * s11).clip(0, 255).astype(np.uint8)
+    warped[ys, xs] = sampled
+    return warped
+
+
+def _warp_texture_overlay_multi_regions_sync(
+    tiled: np.ndarray,
+    W: int,
+    H: int,
+    regions: list[dict],
+    polygon_full: list[list[float]] | None,
+    opacity: float,
+) -> bytes:
+    """Two-region gable warp: lower strip then upper strip of tiled texture."""
+    if len(regions) != 2:
+        raise ValueError("regions must contain exactly 2 items")
+
+    region_polys: list[np.ndarray] = []
+    region_masks: list[np.ndarray] = []
+    dst_raw_list: list[np.ndarray] = []
+
+    for ri, reg in enumerate(regions):
+        c = reg.get("corners")
+        p = reg.get("polygon")
+        if not isinstance(c, list) or len(c) != 4:
+            raise ValueError(f"regions[{ri}].corners must have 4 points")
+        if not isinstance(p, list) or len(p) < 3:
+            raise ValueError(f"regions[{ri}].polygon must have at least 3 points")
+        poly_pts = np.array(p, dtype=np.float32).reshape(-1, 2)
+        poly_pts[:, 0] = np.clip(poly_pts[:, 0], 0, W - 1)
+        poly_pts[:, 1] = np.clip(poly_pts[:, 1], 0, H - 1)
+        poly_pts = _sanitize_polygon_points(poly_pts)
+        if len(poly_pts) < 3:
+            raise ValueError(f"regions[{ri}].polygon degenerate after sanitize")
+        rm = np.zeros((H, W), dtype=np.uint8)
+        cv2.fillPoly(rm, [poly_pts.astype(np.int32)], 255)
+        region_polys.append(poly_pts)
+        region_masks.append(rm)
+        dc = np.array(c, dtype=np.float32).reshape(4, 2)
+        dc[:, 0] = np.clip(dc[:, 0], 0, W - 1)
+        dc[:, 1] = np.clip(dc[:, 1], 0, H - 1)
+        dst_raw_list.append(dc)
+
+    mask = np.zeros((H, W), dtype=np.uint8)
+    if polygon_full and len(polygon_full) >= 3:
+        poly_full = np.array(polygon_full, dtype=np.float32).reshape(-1, 2)
+        poly_full[:, 0] = np.clip(poly_full[:, 0], 0, W - 1)
+        poly_full[:, 1] = np.clip(poly_full[:, 1], 0, H - 1)
+        poly_full = _sanitize_polygon_points(poly_full)
+        if len(poly_full) >= 3:
+            cv2.fillPoly(mask, [poly_full.astype(np.int32)], 255)
+    if not np.any(mask > 0):
+        mask = cv2.bitwise_or(region_masks[0], region_masks[1])
+
+    h0 = float(np.max(region_polys[0][:, 1]) - np.min(region_polys[0][:, 1]))
+    h1 = float(np.max(region_polys[1][:, 1]) - np.min(region_polys[1][:, 1]))
+    t_raw = h1 / (h0 + h1 + 1e-6)
+    t_split = float(np.clip(t_raw, 0.05, 0.45))
+    hm1 = float(max(H - 1, 1))
+    y_split = float(np.clip(t_split * hm1, 1.0, float(max(H - 2, 1))))
+
+    src_lower = np.array(
+        [[0.0, y_split], [float(W - 1), y_split], [float(W - 1), float(H - 1)], [0.0, float(H - 1)]],
+        dtype=np.float32,
+    )
+    src_upper = np.array(
+        [[0.0, 0.0], [float(W - 1), 0.0], [float(W - 1), y_split], [0.0, y_split]],
+        dtype=np.float32,
+    )
+
+    warped_accum = np.zeros((H, W, 4), dtype=np.uint8)
+    src_quads = [src_lower, src_upper]
+    for i, (rm, dst_raw, src_quad) in enumerate(zip(region_masks, dst_raw_list, src_quads)):
+        try:
+            warped_r = _warp_region_inv_uv_rgba(tiled, W, H, src_quad, dst_raw, rm)
+        except Exception as e:
+            print(f"[warp-debug] region {i} inv_uv failed: {e}")
+            warped_r = np.zeros((H, W, 4), dtype=np.uint8)
+        m = rm > 0
+        warped_accum[m] = warped_r[m]
+        print(
+            f"[warp-debug] mode=multi_gable region={i} t_split={t_split:.4f} y_split={y_split:.2f} "
+            f"pixels={int(np.count_nonzero(m))}"
+        )
+
+    safe_opacity = float(max(0.0, min(1.0, opacity)))
+    alpha = (mask.astype(np.float32) / 255.0) * safe_opacity
+    warped_alpha = warped_accum[:, :, 3].astype(np.float32) / 255.0
+    out_alpha = (warped_alpha * alpha * 255.0).clip(0, 255).astype(np.uint8)
+    warped_accum[:, :, 3] = out_alpha
+
+    warped_bgra = cv2.cvtColor(warped_accum, cv2.COLOR_RGBA2BGRA)
+    ok, buf = cv2.imencode(".png", warped_bgra)
+    if not ok:
+        raise ValueError("Failed to encode PNG")
+    return buf.tobytes()
+
+
 def _warp_texture_overlay_sync(
     texture_bytes: bytes,
     corners: list[list[float]],
@@ -258,11 +414,32 @@ def _warp_texture_overlay_sync(
     texture_scale: float,
     opacity: float,
     polygon: list[list[float]] | None = None,
+    regions: list[dict] | None = None,
+    mask_base64: str | None = None,
 ) -> bytes:
     if image_width <= 0 or image_height <= 0:
         raise ValueError("image_width and image_height must be > 0")
+
+    # Decode the optional raster mask if provided
+    exterior_mask: np.ndarray | None = None
+    if mask_base64:
+        import base64
+        try:
+            arr = np.frombuffer(base64.b64decode(mask_base64), dtype=np.uint8)
+            decoded = cv2.imdecode(arr, cv2.IMREAD_GRAYSCALE)
+            if decoded is not None and decoded.shape == (image_height, image_width):
+                exterior_mask = decoded
+        except Exception as e:
+            print(f"[warp-debug] failed to decode mask_base64: {e}")
+
+    # Auto-derive 4-corner perspective quad from polygon when corners aren't provided
+    use_polygon_early = bool(polygon) and isinstance(polygon, list) and len(polygon) >= 3
+    if len(corners) != 4 and use_polygon_early:
+        poly_tmp = np.array(polygon, dtype=np.float32).reshape(-1, 2)
+        corners = _corners_from_polygon_auto(poly_tmp).tolist()
+        print(f"[warp-debug] auto-derived 4 corners from polygon ({len(polygon)} pts)")
     if len(corners) != 4:
-        raise ValueError("corners must have 4 points")
+        raise ValueError("corners must have 4 points (provide 4 corners or polygon with >=3 pts to auto-derive)")
 
     tex_arr = np.frombuffer(texture_bytes, dtype=np.uint8)
     tex = cv2.imdecode(tex_arr, cv2.IMREAD_UNCHANGED)
@@ -283,6 +460,9 @@ def _warp_texture_overlay_sync(
     W = int(image_width)
     H = int(image_height)
     tiled = _tile_texture_rgba(tex, W, H, texture_scale)
+
+    if regions is not None and isinstance(regions, list) and len(regions) == 2:
+        return _warp_texture_overlay_multi_regions_sync(tiled, W, H, regions, polygon, opacity)
     use_polygon = bool(polygon) and len(polygon) >= 3
     poly_pts: np.ndarray | None = None
     if use_polygon:
@@ -330,56 +510,22 @@ def _warp_texture_overlay_sync(
             f"bbox=({dminx:.1f},{dminy:.1f})-({dmaxx:.1f},{dmaxy:.1f})"
         )
 
+    # Intersect with the raster mask (holes) if provided
+    if exterior_mask is not None:
+        mask = cv2.bitwise_and(mask, exterior_mask)
+        print(f"[warp-debug] applied exterior_mask, new nonzero: {int(np.count_nonzero(mask))}")
+
     warped: np.ndarray
     if use_polygon and poly_pts is not None and len(poly_pts) >= 3:
-        # Inverse UV mapping: perspective from corners, full fill inside polygon.
-        warped = np.zeros((H, W, 4), dtype=np.uint8)
-        try:
-            M_inv = np.linalg.inv(M)
-            ys, xs = np.where(mask > 0)
-            if xs.size > 0:
-                ones = np.ones_like(xs, dtype=np.float64)
-                pts = np.stack([xs.astype(np.float64), ys.astype(np.float64), ones], axis=0)
-                src = M_inv @ pts
-                wv = src[2]
-                valid = np.abs(wv) > 1e-8
-                sx = np.zeros_like(wv)
-                sy = np.zeros_like(wv)
-                sx[valid] = src[0][valid] / wv[valid]
-                sy[valid] = src[1][valid] / wv[valid]
-
-                # Repeat texture coordinates to cover polygon outside projected quad.
-                sx = np.mod(sx, float(W))
-                sy = np.mod(sy, float(H))
-
-                x0 = np.floor(sx).astype(np.int32)
-                y0 = np.floor(sy).astype(np.int32)
-                x1 = (x0 + 1) % W
-                y1 = (y0 + 1) % H
-                fx = (sx - x0).astype(np.float32)
-                fy = (sy - y0).astype(np.float32)
-                wa = ((1.0 - fx) * (1.0 - fy))[:, None]
-                wb = (fx * (1.0 - fy))[:, None]
-                wc = ((1.0 - fx) * fy)[:, None]
-                wd = (fx * fy)[:, None]
-
-                s00 = tiled[y0, x0].astype(np.float32)
-                s10 = tiled[y0, x1].astype(np.float32)
-                s01 = tiled[y1, x0].astype(np.float32)
-                s11 = tiled[y1, x1].astype(np.float32)
-                sampled = (wa * s00 + wb * s10 + wc * s01 + wd * s11).clip(0, 255).astype(np.uint8)
-                warped[ys, xs] = sampled
-            print(f"[warp-debug] mode=inv_uv_polygon pixels={int(xs.size)}")
-        except Exception as inv_err:
-            print(f"[warp-debug] inv_uv failed, fallback quad warp: {inv_err}")
-            warped = cv2.warpPerspective(
-                tiled,
-                M,
-                dsize=(W, H),
-                flags=cv2.INTER_LINEAR,
-                borderMode=cv2.BORDER_CONSTANT,
-                borderValue=(0, 0, 0, 0),
-            )
+        # Use built-in OpenCV warp with BORDER_WRAP to seamlessly tile the texture 
+        # beyond the blue perspective quad, filling the entire green polygon mask.
+        warped = cv2.warpPerspective(
+            tiled,
+            M,
+            dsize=(W, H),
+            flags=cv2.INTER_LINEAR,
+            borderMode=cv2.BORDER_WRAP,
+        )
     else:
         warped = cv2.warpPerspective(
             tiled,
@@ -533,10 +679,12 @@ async def warp_wall_texture(
     texture: UploadFile = File(...),
     corners: str = Form(...),
     polygon: str | None = Form(None),
+    regions: str | None = Form(None),
     image_width: int = Form(...),
     image_height: int = Form(...),
     texture_scale: float = Form(0.25),
     opacity: float = Form(0.85),
+    mask_base64: str | None = Form(None),
 ):
     try:
         texture_bytes = await texture.read()
@@ -544,9 +692,32 @@ async def warp_wall_texture(
         polygon_parsed = None
         if polygon:
             polygon_parsed = json.loads(polygon)
+        regions_parsed: list[dict] | None = None
+        if regions:
+            raw_reg = json.loads(regions)
+            if not isinstance(raw_reg, list) or len(raw_reg) != 2:
+                raise ValueError("regions must be a JSON array of length 2")
+            regions_parsed = []
+            for ri, item in enumerate(raw_reg):
+                if not isinstance(item, dict):
+                    raise ValueError(f"regions[{ri}] must be an object")
+                c = item.get("corners")
+                p = item.get("polygon")
+                if not isinstance(c, list) or len(c) != 4:
+                    raise ValueError(f"regions[{ri}].corners must have 4 points")
+                if not isinstance(p, list) or len(p) < 3:
+                    raise ValueError(f"regions[{ri}].polygon must have at least 3 points")
+                corners_r = [[float(c[i][0]), float(c[i][1])] for i in range(4) if isinstance(c[i], list) and len(c[i]) == 2]
+                if len(corners_r) != 4:
+                    raise ValueError(f"regions[{ri}].corners invalid point format")
+                poly_r = [pt for pt in p if isinstance(pt, list) and len(pt) == 2]
+                if len(poly_r) < 3:
+                    raise ValueError(f"regions[{ri}].polygon invalid point format")
+                regions_parsed.append({"corners": corners_r, "polygon": poly_r})
         print(
             f"[warp-wall-texture] corners_len={len(corners_parsed) if isinstance(corners_parsed, list) else '??'} "
             f"polygon_len={len(polygon_parsed) if isinstance(polygon_parsed, list) else 0} "
+            f"regions={'2' if regions_parsed else '0'} "
             f"image=({image_width},{image_height}) scale={texture_scale} opacity={opacity}"
         )
         if isinstance(corners_parsed, list):
@@ -567,6 +738,8 @@ async def warp_wall_texture(
             float(texture_scale),
             float(opacity),
             polygon_parsed,
+            regions_parsed,
+            mask_base64,
         )
         if WARP_DEBUG_SAVE:
             try:
@@ -574,6 +747,7 @@ async def warp_wall_texture(
                 payload = {
                     "corners": corners_parsed,
                     "polygon": polygon_parsed,
+                    "regions": regions_parsed,
                     "image_width": int(image_width),
                     "image_height": int(image_height),
                     "texture_scale": float(texture_scale),

@@ -131,11 +131,13 @@ export function Canvas2D({
 
   const editWallCorners = useUIStore((s) => s.editWallCorners)
   const setEditWallCorners = useUIStore((s) => s.setEditWallCorners)
+  const editCornersMode = useUIStore((s) => s.editCornersMode)
+  const setEditCornersMode = useUIStore((s) => s.setEditCornersMode)
 
   useEffect(() => {
     if (!isReady) return
     syncCornerHandles(selectedWallId)
-  }, [isReady, selectedWallId, editWallCorners, syncCornerHandles])
+  }, [isReady, selectedWallId, editWallCorners, editCornersMode, syncCornerHandles])
 
   const handleExport = useCallback(() => {
     const dataUrl = exportToPng()
@@ -314,6 +316,32 @@ export function Canvas2D({
             >
               Править углы
             </button>
+            {editWallCorners && sceneMode === 'exterior' && (
+              <div className="flex items-center rounded border border-blue-200 bg-blue-50 p-0.5">
+                <button
+                  type="button"
+                  onClick={() => setEditCornersMode('polygon')}
+                  className={`rounded px-2 py-1 text-xs font-medium transition-colors ${
+                    editCornersMode === 'polygon'
+                      ? 'bg-blue-600 text-white'
+                      : 'text-blue-800 hover:bg-blue-100'
+                  }`}
+                >
+                  Форма
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditCornersMode('perspective')}
+                  className={`rounded px-2 py-1 text-xs font-medium transition-colors ${
+                    editCornersMode === 'perspective'
+                      ? 'bg-blue-600 text-white'
+                      : 'text-blue-800 hover:bg-blue-100'
+                  }`}
+                >
+                  Перспектива
+                </button>
+              </div>
+            )}
             <button
               type="button"
               aria-pressed={hideWallMasks}
