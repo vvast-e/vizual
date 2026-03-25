@@ -1,0 +1,29 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    ports:
+      - "8000:8000"
+      - "8001:8001"
+    volumes:
+      - ./warp-debug:/app/warp-debug
+      - ./exterior-debug:/app/exterior-debug
+      - model-cache:/root/.cache/huggingface
+    environment:
+      - EXTERIOR_GDINO_URL=http://127.0.0.1:8001/gdino
+      - EXTERIOR_SAM_URL=http://127.0.0.1:8001/sam
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/nginx.Dockerfile
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  model-cache:

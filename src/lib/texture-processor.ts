@@ -6,7 +6,6 @@
 import type { Canvas } from 'fabric'
 import type { FabricObject } from 'fabric'
 import { Rect, Pattern } from 'fabric'
-import Perspective from 'perspectivejs'
 
 const textureCache = new Map<string, HTMLImageElement>()
 
@@ -179,91 +178,92 @@ function drawTexturedTriangle(
   ctx.restore()
 }
 
-function createTiledCanvas(img: HTMLImageElement, width: number, height: number): HTMLCanvasElement {
-  const c = document.createElement('canvas')
-  c.width = width
-  c.height = height
-  const ctx = c.getContext('2d')!
-  const pat = ctx.createPattern(img, 'repeat')
-  if (pat) {
-    ctx.fillStyle = pat
-    ctx.fillRect(0, 0, width, height)
-  }
-  return c
-}
 
 /**
- * Рендерит текстуру на четырёхугольник стены с учётом перспективы (через perspectivejs).
+ * Рендерит текстуру на четырёхугольник стены с учётом перспективы
+ * через разбиение на 2 треугольника (drawTexturedTriangle).
  *
  * @param corners — 4 угла стены в координатах канваса, порядок: [TL, BL, BR, TR]
+ * @param polygon — опциональный многоугольник стены (для обрезки)
  */
 export async function renderPerspectiveWallTexture(
   textureUrl: string,
   corners: [number, number][],
   canvasWidth: number,
   canvasHeight: number,
-  textureScale: number = 0.25
-): Promise<{ canvas: HTMLCanvasElement; offsetX: number; offsetY: number; localCorners: [number, number][] }> {
-  const img = await loadTextureImage(textureUrl);
+  _textureScale: number = 0.25,
+  polygon?: [number, number][]
+): Promise<{
+  canvas: HTMLCanvasElement
+  offsetX: number
+  offsetY: number
+  localCorners: [number, number][]
+  localPolygon?: [number, number][]
+}> {
+  const img = await loadTextureImage(textureUrl)
   if (corners.length < 4) {
-    const empty = document.createElement('canvas');
-    empty.width = Math.max(1, canvasWidth);
-    empty.height = Math.max(1, canvasHeight);
-    return { canvas: empty, offsetX: 0, offsetY: 0, localCorners: [] };
+    const empty = document.createElement('canvas')
+    empty.width = Math.max(1, canvasWidth)
+    empty.height = Math.max(1, canvasHeight)
+    return { canvas: empty, offsetX: 0, offsetY: 0, localCorners: [], localPolygon: [] }
   }
 
-  // --- FIX: srcCanvas размера bbox стены ---
-  const xs = corners.map((c) => c[0]);
-  const ys = corners.map((c) => c[1]);
-  const minX = Math.min(...xs);
-  const maxX = Math.max(...xs);
-  const minY = Math.min(...ys);
-  const maxY = Math.max(...ys);
-  const bboxW = Math.max(1, Math.ceil(maxX - minX));
-  const bboxH = Math.max(1, Math.ceil(maxY - minY));
-  const srcCanvas = createPatternCanvas(img, 'repeat', bboxW, bboxH);
-  const localCorners = corners.map(([x, y]) => [x - minX, y - minY] as [number, number]);
+  const pointsForBBox = polygon && polygon.length >= 3 ? polygon : corners
+  const xs = pointsForBBox.map((c) => c[0])
+  const ys = pointsForBBox.map((c) => c[1])
+  const minX = Math.min(...xs)
+  const maxX = Math.max(...xs)
+  const minY = Math.min(...ys)
+  const maxY = Math.max(...ys)
+  const bboxW = Math.max(1, Math.ceil(maxX - minX))
+  const bboxH = Math.max(1, Math.ceil(maxY - minY))
 
-  // --- FIX 2: bbox только для оффсета ---
-  const xs2 = corners.map((c) => c[0]);
-  const ys2 = corners.map((c) => c[1]);
-  const minX2 = Math.min(...xs2);
-  const maxX2 = Math.max(...xs2);
-  const minY2 = Math.min(...ys2);
-  const maxY2 = Math.max(...ys2);
-  const bboxW2 = Math.max(1, Math.ceil(maxX2 - minX2));
-  const bboxH2 = Math.max(1, Math.ceil(maxY2 - minY2));
-  const localCorners2 = corners.map(([x, y]) => [x - minX2, y - minY2] as [number, number]);
+  const srcCanvas = createPatternCanvas(img, 'repeat', bboxW, bboxH)
+  const localCorners = corners.map(([x, y]) => [x - minX, y - minY] as [number, number])
+  const localPolygon = (polygon && polygon.length >= 3
+    ? polygon
+    : corners
+  ).map(([x, y]) => [x - minX, y - minY] as [number, number])
 
-  // --- FIX 3: offscreen canvas размера bbox ---
-  const offscreen = document.createElement('canvas');
-  offscreen.width = bboxW;
-  offscreen.height = bboxH;
-  const ctx = offscreen.getContext('2d');
+  const offscreen = document.createElement('canvas')
+  offscreen.width = bboxW
+  offscreen.height = bboxH
+  const ctx = offscreen.getContext('2d')
   if (!ctx) {
-    return { canvas: offscreen, offsetX: minX, offsetY: minY, localCorners };
+    return { canvas: offscreen, offsetX: minX, offsetY: minY, localCorners, localPolygon }
   }
 
-  // --- FIX: dstQuad = localCorners ---
-  const dstQuad = localCorners;
+  // Рисуем перспективу: разбиваем quad на 2 треугольника.
+  // Ожидаемый порядок углов: [TL, BL, BR, TR]
+  const [tl, bl, br, tr] = localCorners
 
-  // --- FIX 5: логирование ---
-  console.log('[WallTexture] renderPerspectiveWallTexture:', {
-    textureUrl,
-    srcW,
-    srcH,
-    bboxW,
-    bboxH,
-    corners,
-    localCorners,
-    dstQuad,
-  });
+  ctx.clearRect(0, 0, bboxW, bboxH)
 
-  // --- FIX 6: рисуем перспективу ---
-  const p = new (Perspective as any)(ctx, srcCanvas);
-  p.draw(dstQuad);
+  // Triangle 1: TL-BL-BR
+  drawTexturedTriangle(
+    ctx,
+    srcCanvas,
+    0, 0,
+    0, bboxH,
+    bboxW, bboxH,
+    tl[0], tl[1],
+    bl[0], bl[1],
+    br[0], br[1]
+  )
 
-  return { canvas: offscreen, offsetX: minX, offsetY: minY, localCorners };
+  // Triangle 2: TL-BR-TR
+  drawTexturedTriangle(
+    ctx,
+    srcCanvas,
+    0, 0,
+    bboxW, bboxH,
+    bboxW, 0,
+    tl[0], tl[1],
+    br[0], br[1],
+    tr[0], tr[1]
+  )
+
+  return { canvas: offscreen, offsetX: minX, offsetY: minY, localCorners, localPolygon }
 }
 
 export { textureCache }
