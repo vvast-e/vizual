@@ -1,9 +1,8 @@
 """
-Local model service: GroundingDINO (bbox) + SAM (mask refinement) — ONNX Runtime.
+Local model service: GroundingDINO (bbox) + SAM (mask refinement) — PyTorch.
 Run: uvicorn model_service:app --port 8001
 
-ONNX-модели загружаются из models/onnx/.
-Если модели не найдены — автоматически экспортируются из PyTorch.
+Models loaded via transformers directly (no ONNX export needed).
 """
 import io
 import json
@@ -13,17 +12,15 @@ from contextlib import asynccontextmanager
 _BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 _PROJECT_ROOT = os.path.abspath(os.path.join(_BACKEND_DIR, ".."))
 _HF_HOME = os.path.join(_PROJECT_ROOT, "models", "huggingface")
-_ONNX_DIR = os.path.join(_PROJECT_ROOT, "models", "onnx")
 os.makedirs(_HF_HOME, exist_ok=True)
-os.makedirs(_ONNX_DIR, exist_ok=True)
 os.environ.setdefault("HF_HOME", _HF_HOME)
 
 import cv2
 import numpy as np
+import torch
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
 from PIL import Image
-from transformers import AutoProcessor, SamProcessor
 
 DEVICE = "cpu"
 
@@ -36,34 +33,24 @@ sam_processor = None
 def _load_all_models():
     global gdino_model, gdino_processor, sam_model, sam_processor
 
-    from optimum.onnxruntime import (
-        ORTModelForZeroShotObjectDetection,
-        ORTModelForSemanticSegmentation,
-    )
+    from transformers import AutoModelForZeroShotObjectDetection, AutoProcessor
+    from transformers import SamModel, SamProcessor
 
-    gdino_dir = os.path.join(_ONNX_DIR, "grounding-dino-tiny")
-    sam_dir = os.path.join(_ONNX_DIR, "mobile-sam")
+    # GroundingDINO-tiny
+    gdino_id = "IDEA-Research/grounding-dino-tiny"
+    print(f"[model_service] Loading GroundingDINO from {gdino_id}...")
+    gdino_processor = AutoProcessor.from_pretrained(gdino_id, use_fast=False)
+    gdino_model = AutoModelForZeroShotObjectDetection.from_pretrained(gdino_id).to(DEVICE)
+    gdino_model.eval()
+    print("[model_service] GroundingDINO loaded.")
 
-    # Экспортируем модели если их нет
-    if not os.path.exists(os.path.join(gdino_dir, "model.onnx")):
-        print("[model_service] GroundingDINO ONNX not found, exporting...")
-        from export_onnx import export_grounding_dino
-        export_grounding_dino()
-
-    if not os.path.exists(os.path.join(sam_dir, "model.onnx")):
-        print("[model_service] SAM ONNX not found, exporting...")
-        from export_onnx import export_sam
-        export_sam()
-
-    print(f"[model_service] Loading GroundingDINO ONNX from {gdino_dir}...")
-    gdino_processor = AutoProcessor.from_pretrained(gdino_dir, use_fast=False)
-    gdino_model = ORTModelForZeroShotObjectDetection.from_pretrained(gdino_dir)
-    print("[model_service] GroundingDINO ONNX loaded.")
-
-    print(f"[model_service] Loading SAM ONNX from {sam_dir}...")
-    sam_processor = SamProcessor.from_pretrained(sam_dir)
-    sam_model = ORTModelForSemanticSegmentation.from_pretrained(sam_dir)
-    print("[model_service] SAM ONNX loaded.")
+    # MobileSAM
+    sam_id = "ChaoningZhang/MobileSAM"
+    print(f"[model_service] Loading MobileSAM from {sam_id}...")
+    sam_processor = SamProcessor.from_pretrained(sam_id)
+    sam_model = SamModel.from_pretrained(sam_id).to(DEVICE)
+    sam_model.eval()
+    print("[model_service] MobileSAM loaded.")
 
 
 @asynccontextmanager
