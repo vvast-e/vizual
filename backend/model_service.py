@@ -44,13 +44,13 @@ def _load_all_models():
     gdino_model.eval()
     print("[model_service] GroundingDINO loaded.")
 
-    # MobileSAM (correct repo on HuggingFace)
-    sam_id = "dhkim2810/MobileSAM"
-    print(f"[model_service] Loading MobileSAM from {sam_id}...")
+    # SAM ViT-Base (stable, tested)
+    sam_id = "facebook/sam-vit-base"
+    print(f"[model_service] Loading SAM from {sam_id}...")
     sam_processor = SamProcessor.from_pretrained(sam_id)
     sam_model = SamModel.from_pretrained(sam_id).to(DEVICE)
     sam_model.eval()
-    print("[model_service] MobileSAM loaded.")
+    print("[model_service] SAM loaded.")
 
 
 @asynccontextmanager

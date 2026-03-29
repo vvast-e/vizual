@@ -97,8 +97,8 @@ def export_grounding_dino():
 def export_sam():
     from transformers import SamModel, SamProcessor
 
-    model_id = "ChaoningZhang/MobileSAM"
-    out_dir = os.path.join(_ONNX_DIR, "mobile-sam")
+    model_id = "facebook/sam-vit-base"
+    out_dir = os.path.join(_ONNX_DIR, "sam-vit-base")
     onnx_path = os.path.join(out_dir, "model.onnx")
 
     if os.path.exists(onnx_path):
