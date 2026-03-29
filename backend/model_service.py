@@ -39,7 +39,7 @@ def _load_all_models():
     # GroundingDINO-tiny
     gdino_id = "IDEA-Research/grounding-dino-tiny"
     print(f"[model_service] Loading GroundingDINO from {gdino_id}...")
-    gdino_processor = AutoProcessor.from_pretrained(gdino_id, use_fast=False)
+    gdino_processor = AutoProcessor.from_pretrained(gdino_id, backend="torchvision")
     gdino_model = AutoModelForZeroShotObjectDetection.from_pretrained(gdino_id).to(DEVICE)
     gdino_model.eval()
     print("[model_service] GroundingDINO loaded.")
