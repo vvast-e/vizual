@@ -1,36 +1,31 @@
 """
-Local model service: GroundingDINO (bbox) + SAM (mask refinement).
+Local model service: GroundingDINO (bbox) + SAM (mask refinement) — ONNX Runtime.
 Run: uvicorn model_service:app --port 8001
-Weights are downloaded automatically from HuggingFace on first run.
 
-Кэш Hugging Face: <корень репозитория>/models/huggingface/ (HF_HOME).
+ONNX-модели загружаются из models/onnx/.
+Если модели не найдены — автоматически экспортируются из PyTorch.
 """
 import io
 import json
 import os
 from contextlib import asynccontextmanager
 
-# До импорта transformers — иначе кэш уйдёт в ~/.cache/huggingface
 _BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 _PROJECT_ROOT = os.path.abspath(os.path.join(_BACKEND_DIR, ".."))
 _HF_HOME = os.path.join(_PROJECT_ROOT, "models", "huggingface")
+_ONNX_DIR = os.path.join(_PROJECT_ROOT, "models", "onnx")
 os.makedirs(_HF_HOME, exist_ok=True)
+os.makedirs(_ONNX_DIR, exist_ok=True)
 os.environ.setdefault("HF_HOME", _HF_HOME)
 
 import cv2
 import numpy as np
-import torch
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
 from PIL import Image
-from transformers import (
-    AutoModelForZeroShotObjectDetection,
-    AutoProcessor,
-    SamModel,
-    SamProcessor,
-)
+from transformers import AutoProcessor, SamProcessor
 
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+DEVICE = "cpu"
 
 gdino_model = None
 gdino_processor = None
@@ -41,25 +36,34 @@ sam_processor = None
 def _load_all_models():
     global gdino_model, gdino_processor, sam_model, sam_processor
 
-    print(f"[model_service] HF_HOME={_HF_HOME}")
-    print(f"[model_service] Loading GroundingDINO on {DEVICE}...")
-    # ВАЖНО: отключаем fast-processor, чтобы не требовал GroundingDinoImageProcessorFast + torch>=2.4
-    # На CPU с torch 2.0.1 используем медленный, но совместимый вариант.
-    gdino_processor = AutoProcessor.from_pretrained(
-        "IDEA-Research/grounding-dino-base",
-        use_fast=False,
+    from optimum.onnxruntime import (
+        ORTModelForZeroShotObjectDetection,
+        ORTModelForSemanticSegmentation,
     )
-    gdino_model = AutoModelForZeroShotObjectDetection.from_pretrained(
-        "IDEA-Research/grounding-dino-base"
-    ).to(DEVICE)
-    gdino_model.eval()
-    print("[model_service] GroundingDINO loaded.")
 
-    print(f"[model_service] Loading SAM ViT-Base on {DEVICE}...")
-    sam_processor = SamProcessor.from_pretrained("facebook/sam-vit-base")
-    sam_model = SamModel.from_pretrained("facebook/sam-vit-base").to(DEVICE)
-    sam_model.eval()
-    print("[model_service] SAM loaded.")
+    gdino_dir = os.path.join(_ONNX_DIR, "grounding-dino-tiny")
+    sam_dir = os.path.join(_ONNX_DIR, "mobile-sam")
+
+    # Экспортируем модели если их нет
+    if not os.path.exists(os.path.join(gdino_dir, "model.onnx")):
+        print("[model_service] GroundingDINO ONNX not found, exporting...")
+        from export_onnx import export_grounding_dino
+        export_grounding_dino()
+
+    if not os.path.exists(os.path.join(sam_dir, "model.onnx")):
+        print("[model_service] SAM ONNX not found, exporting...")
+        from export_onnx import export_sam
+        export_sam()
+
+    print(f"[model_service] Loading GroundingDINO ONNX from {gdino_dir}...")
+    gdino_processor = AutoProcessor.from_pretrained(gdino_dir, use_fast=False)
+    gdino_model = ORTModelForZeroShotObjectDetection.from_pretrained(gdino_dir)
+    print("[model_service] GroundingDINO ONNX loaded.")
+
+    print(f"[model_service] Loading SAM ONNX from {sam_dir}...")
+    sam_processor = SamProcessor.from_pretrained(sam_dir)
+    sam_model = ORTModelForSemanticSegmentation.from_pretrained(sam_dir)
+    print("[model_service] SAM ONNX loaded.")
 
 
 @asynccontextmanager
@@ -68,7 +72,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Model Service (GroundingDINO + SAM)", lifespan=lifespan)
+app = FastAPI(title="Model Service (GroundingDINO + SAM) ONNX", lifespan=lifespan)
 
 
 def _read_image_pil(image_bytes: bytes) -> Image.Image:
@@ -88,10 +92,9 @@ async def grounding_dino_detect(
     image_bytes = await image.read()
     pil_image = _read_image_pil(image_bytes)
 
-    inputs = gdino_processor(images=pil_image, text=prompt, return_tensors="pt").to(DEVICE)
+    inputs = gdino_processor(images=pil_image, text=prompt, return_tensors="pt")
 
-    with torch.no_grad():
-        outputs = gdino_model(**inputs)
+    outputs = gdino_model(**inputs)
 
     results = gdino_processor.post_process_grounded_object_detection(
         outputs,
@@ -144,10 +147,9 @@ async def sam_segment(
         pil_image,
         input_boxes=input_boxes,
         return_tensors="pt",
-    ).to(DEVICE)
+    )
 
-    with torch.no_grad():
-        outputs = sam_model(**inputs)
+    outputs = sam_model(**inputs)
 
     masks = sam_processor.image_processor.post_process_masks(
         outputs.pred_masks.cpu(),

@@ -612,6 +612,19 @@ async def detect_walls(file: UploadFile = File(...)):
             pass
 
 
+MAX_IMAGE_SIZE = int(os.getenv("MAX_IMAGE_SIZE", "1920"))
+
+
+def _resize_image_if_needed(img):
+    """Resize image if any dimension exceeds MAX_IMAGE_SIZE."""
+    h, w = img.shape[:2]
+    if max(h, w) > MAX_IMAGE_SIZE:
+        scale = MAX_IMAGE_SIZE / max(h, w)
+        new_w, new_h = int(w * scale), int(h * scale)
+        img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+    return img
+
+
 @app.post("/api/detect-exterior")
 async def detect_exterior(file: UploadFile = File(...)):
     if not file.content_type or not file.content_type.startswith("image/"):
@@ -625,12 +638,20 @@ async def detect_exterior(file: UploadFile = File(...)):
     img = cv2.imdecode(img_arr, cv2.IMREAD_COLOR)
     if img is None:
         raise HTTPException(status_code=400, detail="Failed to decode image")
+    
+    # Resize large images for faster CPU inference
+    orig_h, orig_w = img.shape[:2]
+    img = _resize_image_if_needed(img)
     h, w = img.shape[:2]
+    
+    # Re-encode to bytes for pipeline
+    _, buf = cv2.imencode(".jpg", img)
+    resized_contents = buf.tobytes()
 
     from exterior_pipeline import run_exterior_pipeline
 
     try:
-        result = await run_exterior_pipeline(contents, w, h)
+        result = await run_exterior_pipeline(resized_contents, w, h)
         try:
             walls = result.get("walls") if isinstance(result, dict) else None
             masks = result.get("masks") if isinstance(result, dict) else None

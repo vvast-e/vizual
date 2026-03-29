@@ -13,6 +13,7 @@ services:
     environment:
       - EXTERIOR_GDINO_URL=http://127.0.0.1:8001/gdino
       - EXTERIOR_SAM_URL=http://127.0.0.1:8001/sam
+      - MAX_IMAGE_SIZE=1920
     restart: unless-stopped
 
   frontend:
