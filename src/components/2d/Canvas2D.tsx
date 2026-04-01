@@ -4,7 +4,6 @@ import { useVisualizerStore } from '@/store/useVisualizerStore'
 import { useMaterialStore } from '@/store/useMaterialStore'
 import { useUIStore } from '@/store/useUIStore'
 import { useWallStore } from '@/store/useWallStore'
-import { MaskEditor } from './MaskEditor'
 
 export interface Canvas2DProps {
   className?: string
@@ -22,10 +21,7 @@ export function Canvas2D({
   const [canvasSize, setCanvasSize] = useState({ width: 800, height: 500 })
   const photoDataUrl = useVisualizerStore((s) => s.photoDataUrl)
 
-  const [brushSize, setBrushSizeState] = useState(20)
   const selectedMaterial = useMaterialStore((s) => s.selectedMaterial)
-  const maskTool = useUIStore((s) => s.maskTool)
-  const setMaskTool = useUIStore((s) => s.setMaskTool)
   const hideWallMasks = useUIStore((s) => s.hideWallMasks)
   const setHideWallMasks = useUIStore((s) => s.setHideWallMasks)
   const wallVisibility = useUIStore((s) => s.wallVisibility)
@@ -62,17 +58,11 @@ export function Canvas2D({
     isReady,
     loadPhotoFromDataUrl,
     clearCanvas,
-    drawingMode,
-    setDrawingMode,
-    setBrushSize,
-    clearMask,
     setWallOverlays,
     applyTexture,
     applyTextureToWall,
     highlightSelectedWall,
     syncCornerHandles,
-    finishLasso,
-    clearMaskToolState,
     textureScale,
     setTextureScale,
     hasTextureLayer,
@@ -83,18 +73,6 @@ export function Canvas2D({
     customMaskMode,
     onCustomMaskComplete,
   })
-
-  const handleBrushSizeChange = useCallback(
-    (size: number) => {
-      setBrushSizeState(size)
-      setBrushSize(size)
-    },
-    [setBrushSize]
-  )
-
-  useEffect(() => {
-    setDrawingMode(maskTool === 'brush')
-  }, [maskTool, setDrawingMode])
 
   useEffect(() => {
     if (photoDataUrl && isReady) {
@@ -145,19 +123,7 @@ export function Canvas2D({
   return (
     <div className={`flex flex-1 flex-col gap-2 overflow-hidden ${className}`}>
       {photoDataUrl && (
-        <>
-          <MaskEditor
-            drawingMode={drawingMode}
-            onDrawingModeChange={setDrawingMode}
-            brushSize={brushSize}
-            onBrushSizeChange={handleBrushSizeChange}
-            onClearMask={clearMask}
-            maskTool={maskTool}
-            onMaskToolChange={setMaskTool}
-            onClearMaskToolState={clearMaskToolState}
-            onFinishLasso={finishLasso}
-          />
-          <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={handleApplyTexture}
@@ -239,7 +205,6 @@ export function Canvas2D({
               Очистить
             </button>
           </div>
-        </>
       )}
       <div
         ref={containerRef}
@@ -260,11 +225,6 @@ export function Canvas2D({
           </div>
         )}
       </div>
-      {photoDataUrl && (
-        <p className="text-xs text-gray-400">
-          Клик по стене — выбор. Рисуйте маски кистью, прямоугольником или лассо.
-        </p>
-      )}
     </div>
   )
 }
