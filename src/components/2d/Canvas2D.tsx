@@ -7,21 +7,19 @@ import { useWallStore } from '@/store/useWallStore'
 import { MaskEditor } from './MaskEditor'
 
 export interface Canvas2DProps {
-  width?: number
-  height?: number
   className?: string
   customMaskMode?: boolean
   onCustomMaskComplete?: (corners: [number, number][]) => void
 }
 
 export function Canvas2D({
-  width = 800,
-  height = 600,
   className = '',
   customMaskMode = false,
   onCustomMaskComplete,
 }: Canvas2DProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [canvasSize, setCanvasSize] = useState({ width: 800, height: 500 })
   const photoDataUrl = useVisualizerStore((s) => s.photoDataUrl)
 
   const [brushSize, setBrushSizeState] = useState(20)
@@ -45,6 +43,21 @@ export function Canvas2D({
   const editCornersMode = useUIStore((s) => s.editCornersMode)
   const setEditCornersMode = useUIStore((s) => s.setEditCornersMode)
 
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const { width: w, height: h } = entry.contentRect
+        if (w > 0 && h > 0) {
+          setCanvasSize({ width: Math.round(w), height: Math.round(h) })
+        }
+      }
+    })
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
+
   const {
     isReady,
     loadPhotoFromDataUrl,
@@ -65,8 +78,8 @@ export function Canvas2D({
     hasTextureLayer,
   } = useCanvas2D({
     canvasRef,
-    containerWidth: width,
-    containerHeight: height,
+    containerWidth: canvasSize.width,
+    containerHeight: canvasSize.height,
     customMaskMode,
     onCustomMaskComplete,
   })
@@ -130,7 +143,7 @@ export function Canvas2D({
   }, [selectedMaterial?.texture.url, selectedWallId, walls, wallImageSize, applyTexture, applyTextureToWall, setWallTexture])
 
   return (
-    <div className={`flex flex-col gap-2 ${className}`}>
+    <div className={`flex flex-1 flex-col gap-2 overflow-hidden ${className}`}>
       {photoDataUrl && (
         <>
           <MaskEditor
@@ -228,13 +241,17 @@ export function Canvas2D({
           </div>
         </>
       )}
-      <div className="relative overflow-hidden rounded-lg border border-gray-200 bg-gray-100 shadow-sm" style={{ width, height, maxWidth: '100%' }}>
+      <div
+        ref={containerRef}
+        className="relative flex-1 overflow-hidden rounded-lg border border-gray-200 bg-gray-100 shadow-sm"
+        style={{ minHeight: 200 }}
+      >
         <canvas
           ref={canvasRef}
-          width={width}
-          height={height}
+          width={canvasSize.width}
+          height={canvasSize.height}
           className="block touch-none"
-          style={{ width, height, display: 'block' }}
+          style={{ width: '100%', height: '100%', display: 'block' }}
           aria-label="Холст для наложения текстуры на фото"
         />
         {isDetecting && (

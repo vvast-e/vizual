@@ -59,15 +59,13 @@ export function EditorPage() {
           isDrawingCustomMask={isDrawingCustomMask}
           onCancelCustomMask={handleCancelCustomMask}
         />
-        <main className="flex flex-1 flex-col items-center overflow-y-auto bg-gray-100 p-4">
+        <main className="flex flex-1 flex-col overflow-hidden bg-gray-100 p-4">
           <Canvas2D
-            width={900}
-            height={600}
             customMaskMode={isDrawingCustomMask}
             onCustomMaskComplete={handleCustomMaskComplete}
           />
         </main>
-        <aside className="flex w-[280px] flex-shrink-0 flex-col gap-4 overflow-y-auto border-l border-gray-200 bg-white p-4">
+        <aside className="flex w-[320px] flex-shrink-0 flex-col gap-4 overflow-y-auto border-l border-gray-200 bg-white p-5">
           <section>
             <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">
               Материалы

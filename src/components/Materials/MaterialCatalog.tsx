@@ -19,7 +19,7 @@ export function MaterialCatalog({
 
   return (
     <div className={className} role="listbox" aria-label="Каталог материалов">
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-2">
         {materials.map((material) => (
           <MaterialCard
             key={material.id}
