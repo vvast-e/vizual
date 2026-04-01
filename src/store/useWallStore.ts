@@ -39,6 +39,10 @@ interface WallState {
   updateWallCorners: (wallId: number, corners: [number, number][]) => void
   /** Обновить одну вершину polygon по индексу (для экстерьера). */
   updateWallPolygonVertex: (wallId: number, vertexIndex: number, point: [number, number]) => void
+  /** Удалить стену из списка */
+  removeWall: (wallId: number) => void
+  /** Добавить кастомную маску (нарисованную пользователем) */
+  addCustomWall: (wall: WallData) => void
 }
 
 export const useWallStore = create<WallState>((set) => ({
@@ -95,5 +99,20 @@ export const useWallStore = create<WallState>((set) => ({
           center: [Number(cx.toFixed(2)), Number(cy.toFixed(2))] as [number, number],
         }
       }),
+    })),
+  removeWall: (wallId) =>
+    set((s) => {
+      const newTextures = { ...s.wallTextures }
+      delete newTextures[wallId]
+      return {
+        walls: s.walls.filter((w) => w.id !== wallId),
+        wallTextures: newTextures,
+        selectedWallId: s.selectedWallId === wallId ? null : s.selectedWallId,
+      }
+    }),
+  addCustomWall: (wall) =>
+    set((s) => ({
+      walls: [...s.walls, wall],
+      selectedWallId: wall.id,
     })),
 }))

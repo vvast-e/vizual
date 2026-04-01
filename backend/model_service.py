@@ -93,8 +93,8 @@ async def grounding_dino_detect(
 
     bboxes = []
     for box, score, label in zip(
-        results["boxes"].cpu().numpy(),
-        results["scores"].cpu().numpy(),
+        results["boxes"].detach().cpu().numpy(),
+        results["scores"].detach().cpu().numpy(),
         results["labels"],
     ):
         x1, y1, x2, y2 = box.tolist()

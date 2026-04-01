@@ -7,23 +7,22 @@ import { useWallStore } from '@/store/useWallStore'
 import type { WallData } from '@/store/useWallStore'
 import { MAX_PHOTO_SIZE_BYTES, ALLOWED_IMAGE_TYPES } from '@/lib/constants'
 
-const MIN_ZOOM = 0.1
-const MAX_ZOOM = 5
-const ZOOM_STEP = 0.1
-
 export interface UseCanvas2DOptions {
   canvasRef: React.RefObject<HTMLCanvasElement | null>
   containerWidth?: number
   containerHeight?: number
-  /** Вызывается при двух кликах в режиме "Разделить фасад". Координаты уже в image_size. */
-  onSplitLineComplete?: (p1: { x: number; y: number }, p2: { x: number; y: number }) => void
+  /** Режим рисования кастомной маски (4 точки перспективы) */
+  customMaskMode?: boolean
+  /** Вызывается когда 4 точки перспективы нарисованы */
+  onCustomMaskComplete?: (corners: [number, number][]) => void
 }
 
 export function useCanvas2D({
   canvasRef,
   containerWidth = 800,
   containerHeight = 600,
-  onSplitLineComplete,
+  customMaskMode = false,
+  onCustomMaskComplete,
 }: UseCanvas2DOptions) {
   const canvasInstanceRef = useRef<Canvas | null>(null)
   const [isReady, setIsReady] = useState(false)
@@ -53,13 +52,12 @@ export function useCanvas2D({
   const exteriorMaskRef = useRef<FabricObject | null>(null)
   const EXTERIOR_MASK_DATA_KEY = 'isExteriorMask'
 
-  const splitFacadeMode = useUIStore((s) => s.splitFacadeMode)
-  const splitFacadeModeRef = useRef(splitFacadeMode)
-  splitFacadeModeRef.current = splitFacadeMode
-  const splitPendingPointRef = useRef<{ x: number; y: number } | null>(null)
-  const splitLinePreviewRef = useRef<Path | null>(null)
-  const onSplitLineCompleteRef = useRef(onSplitLineComplete)
-  onSplitLineCompleteRef.current = onSplitLineComplete
+  const customMaskModeRef = useRef(customMaskMode)
+  customMaskModeRef.current = customMaskMode
+  const customMaskPointsRef = useRef<{ x: number; y: number }[]>([])
+  const customMaskPreviewRef = useRef<FabricObject[]>([])
+  const onCustomMaskCompleteRef = useRef(onCustomMaskComplete)
+  onCustomMaskCompleteRef.current = onCustomMaskComplete
 
   const initCanvas = useCallback(() => {
     const el = canvasRef.current
@@ -80,15 +78,6 @@ export function useCanvas2D({
     brush.width = 20
     canvas.freeDrawingBrush = brush
 
-    canvas.on('mouse:wheel', (opt) => {
-      const ev = opt.e as WheelEvent
-      ev.preventDefault()
-      const delta = ev.deltaY > 0 ? -ZOOM_STEP : ZOOM_STEP
-      const zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, canvas.getZoom() + delta))
-      const point = new Point(ev.offsetX, ev.offsetY)
-      canvas.zoomToPoint(point, zoom)
-    })
-
     const removeRectPreview = () => {
       const prev = rectPreviewRef.current
       if (prev) {
@@ -101,39 +90,62 @@ export function useCanvas2D({
     canvas.on('mouse:down', (opt) => {
       const scenePoint = canvas.getScenePoint(opt.e as MouseEvent)
 
-      if (splitFacadeModeRef.current && useUIStore.getState().sceneMode === 'exterior') {
-        const cb = onSplitLineCompleteRef.current
-        if (!cb) return
-        const pending = splitPendingPointRef.current
-        if (!pending) {
-          splitPendingPointRef.current = { x: scenePoint.x, y: scenePoint.y }
-          return
+      if (customMaskModeRef.current) {
+        const pts = customMaskPointsRef.current
+        pts.push({ x: scenePoint.x, y: scenePoint.y })
+
+        const dot = new Circle({
+          left: scenePoint.x - 5,
+          top: scenePoint.y - 5,
+          radius: 5,
+          fill: '#10b981',
+          stroke: '#064e3b',
+          strokeWidth: 1,
+          selectable: false,
+          evented: false,
+          originX: 'left',
+          originY: 'top',
+        })
+        canvas.add(dot)
+        customMaskPreviewRef.current.push(dot)
+
+        if (pts.length > 1) {
+          const prev = pts[pts.length - 2]
+          const line = new Path(`M ${prev.x} ${prev.y} L ${scenePoint.x} ${scenePoint.y}`, {
+            stroke: '#10b981',
+            strokeWidth: 2,
+            selectable: false,
+            evented: false,
+          })
+          canvas.add(line)
+          customMaskPreviewRef.current.push(line)
         }
-        const bg = backgroundImageRef.current
-        const bounds =
-          bg && typeof (bg as unknown as { getBoundingRect?: () => { left: number; top: number; width: number; height: number } }).getBoundingRect === 'function'
-            ? (bg as unknown as { getBoundingRect: () => { left: number; top: number; width: number; height: number } }).getBoundingRect()
-            : null
-        const { wallImageSize } = useWallStore.getState()
-        if (bounds && wallImageSize) {
-          const scaleX = bounds.width / wallImageSize.width
-          const scaleY = bounds.height / wallImageSize.height
-          const imgP1 = {
-            x: (pending.x - bounds.left) / scaleX,
-            y: (pending.y - bounds.top) / scaleY,
+
+        if (pts.length >= 4) {
+          const last = pts[3]
+          const first = pts[0]
+          const closeLine = new Path(`M ${last.x} ${last.y} L ${first.x} ${first.y}`, {
+            stroke: '#10b981',
+            strokeWidth: 2,
+            selectable: false,
+            evented: false,
+          })
+          canvas.add(closeLine)
+          customMaskPreviewRef.current.push(closeLine)
+
+          const corners: [number, number][] = pts.map((p) => [p.x, p.y] as [number, number])
+          const cb = onCustomMaskCompleteRef.current
+          if (cb) {
+            cb(corners)
           }
-          const imgP2 = {
-            x: (scenePoint.x - bounds.left) / scaleX,
-            y: (scenePoint.y - bounds.top) / scaleY,
+
+          for (const obj of customMaskPreviewRef.current) {
+            canvas.remove(obj)
           }
-          cb(imgP1, imgP2)
+          customMaskPreviewRef.current = []
+          customMaskPointsRef.current = []
         }
-        splitPendingPointRef.current = null
-        if (splitLinePreviewRef.current) {
-          canvas.remove(splitLinePreviewRef.current)
-          splitLinePreviewRef.current = null
-        }
-        useUIStore.getState().setSplitFacadeMode(false)
+
         canvas.requestRenderAll()
         return
       }
@@ -181,23 +193,6 @@ export function useCanvas2D({
     canvas.on('mouse:move', (opt) => {
       const tool = maskToolRef.current
       const scenePoint = canvas.getScenePoint(opt.e as MouseEvent)
-
-      if (splitFacadeModeRef.current && splitPendingPointRef.current) {
-        const p1 = splitPendingPointRef.current
-        if (splitLinePreviewRef.current) canvas.remove(splitLinePreviewRef.current)
-        const d = `M ${p1.x} ${p1.y} L ${scenePoint.x} ${scenePoint.y}`
-        const preview = new Path(d, {
-          stroke: '#e11d48',
-          strokeWidth: 2,
-          strokeDashArray: [8, 4],
-          selectable: false,
-          evented: false,
-        })
-        canvas.add(preview)
-        splitLinePreviewRef.current = preview
-        canvas.requestRenderAll()
-        return
-      }
 
       if (tool === 'rect' && rectStartRef.current) {
         const center = rectStartRef.current
@@ -327,16 +322,18 @@ export function useCanvas2D({
   }, [initCanvas])
 
   useEffect(() => {
-    if (!splitFacadeMode) {
-      splitPendingPointRef.current = null
+    if (!customMaskMode) {
+      customMaskPointsRef.current = []
       const canvas = canvasInstanceRef.current
-      if (splitLinePreviewRef.current && canvas) {
-        canvas.remove(splitLinePreviewRef.current)
-        splitLinePreviewRef.current = null
+      if (canvas && customMaskPreviewRef.current.length > 0) {
+        for (const obj of customMaskPreviewRef.current) {
+          canvas.remove(obj)
+        }
+        customMaskPreviewRef.current = []
         canvas.requestRenderAll()
       }
     }
-  }, [splitFacadeMode])
+  }, [customMaskMode])
 
   const loadPhotoFromDataUrl = useCallback(async (dataUrl: string) => {
     const canvas = canvasInstanceRef.current
