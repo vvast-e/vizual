@@ -42,7 +42,9 @@ export function useCanvas2D({
 
   const [textureScale, setTextureScaleState] = useState(0.25)
   const [hasTextureLayer, setHasTextureLayer] = useState(false)
-  const textureLayerRef = useRef<FabricObject | null>(null)
+  const [isPhotoLoaded, setIsPhotoLoaded] = useState(false)
+  
+  const textureLayersRef = useRef<Record<string, FabricObject>>({})
   const wallOverlaysRef = useRef<FabricObject[]>([])
   const wallDebugShapesRef = useRef<FabricObject[]>([])
   const wallIdByObjectRef = useRef<WeakMap<FabricObject, number>>(new WeakMap())
@@ -338,6 +340,7 @@ export function useCanvas2D({
   const loadPhotoFromDataUrl = useCallback(async (dataUrl: string) => {
     const canvas = canvasInstanceRef.current
     if (!canvas) return
+    setIsPhotoLoaded(false)
     try {
       const img = await FabricImage.fromURL(dataUrl)
       const imageW = img.width ?? 0
@@ -370,6 +373,7 @@ export function useCanvas2D({
       canvas.renderAll()
       backgroundImageRef.current = img
       setPhotoDataUrl(dataUrl)
+      setIsPhotoLoaded(true)
     } catch {
       // ignore load error
     }
@@ -403,12 +407,13 @@ export function useCanvas2D({
     canvas.viewportTransform = [1, 0, 0, 1, 0, 0]
     canvas.renderAll()
     backgroundImageRef.current = null
-    textureLayerRef.current = null
+    textureLayersRef.current = {}
     exteriorMaskRef.current = null
     wallOverlaysRef.current = []
     wallDebugShapesRef.current = []
     setHasTextureLayer(false)
     setPhotoDataUrl(null)
+    setIsPhotoLoaded(false)
     useWallStore.getState().setWalls([], null)
   }, [setPhotoDataUrl])
 
@@ -564,10 +569,13 @@ export function useCanvas2D({
       const scaleX = bounds.width / wallImageSize.width
       const scaleY = bounds.height / wallImageSize.height
       const hideWallMasks = useUIStore.getState().hideWallMasks
+      const wallVisibility = useUIStore.getState().wallVisibility
+      
       for (const wall of walls) {
+        const isVisible = wallVisibility[wall.id] !== false
         const overlayPoly =
           wall.polygon && wall.polygon.length >= 3 ? wall.polygon : wall.corners
-        if (!hideWallMasks && overlayPoly.length >= 3) {
+        if (!hideWallMasks && isVisible && overlayPoly.length >= 3) {
           const d =
             overlayPoly
               .map((c, i) => {
@@ -625,10 +633,12 @@ export function useCanvas2D({
     ) => {
       const canvas = canvasInstanceRef.current
       if (!canvas) return
-      if (textureLayerRef.current) {
-        canvas.remove(textureLayerRef.current)
-        textureLayerRef.current = null
+      
+      const layerKey = 'background'
+      if (textureLayersRef.current[layerKey]) {
+        canvas.remove(textureLayersRef.current[layerKey])
       }
+      
       const { applyPatternToCanvas } = await import('@/lib/texture-processor')
       let clipPath: Group | FabricObject | undefined = options?.clipPathOverride
       if (!clipPath) {
@@ -649,7 +659,7 @@ export function useCanvas2D({
         sceneBounds,
         textureScale
       )
-      textureLayerRef.current = layer
+      textureLayersRef.current[layerKey] = layer
       setHasTextureLayer(true)
     },
     [getMaskObjects, textureScale, getBackgroundBounds]
@@ -664,10 +674,12 @@ export function useCanvas2D({
     ) => {
       const canvas = canvasInstanceRef.current
       if (!canvas) return
-      if (textureLayerRef.current) {
-        canvas.remove(textureLayerRef.current)
-        textureLayerRef.current = null
+      
+      const layerKey = selectedWallId != null ? String(selectedWallId) : 'background'
+      if (textureLayersRef.current[layerKey]) {
+        canvas.remove(textureLayersRef.current[layerKey])
       }
+
       const sceneMode = useUIStore.getState().sceneMode
       const wall = selectedWallId != null ? useWallStore.getState().walls.find((w) => w.id === selectedWallId) : null
       const wallPolygon = wall?.polygon && wall.polygon.length >= 3 ? wall.polygon : undefined
@@ -719,7 +731,7 @@ export function useCanvas2D({
         })
 
         canvas.add(fabricImg)
-        textureLayerRef.current = fabricImg
+        textureLayersRef.current[layerKey] = fabricImg
         setHasTextureLayer(true)
         canvas.requestRenderAll()
         return
@@ -757,7 +769,7 @@ export function useCanvas2D({
       )
       fabricImg.set({ clipPath })
       canvas.add(fabricImg)
-      textureLayerRef.current = fabricImg
+      textureLayersRef.current[layerKey] = fabricImg
       setHasTextureLayer(true)
       canvas.requestRenderAll()
     },
@@ -912,12 +924,14 @@ export function useCanvas2D({
     canvas.requestRenderAll()
   }, [getBackgroundBounds])
 
-  const setTextureScale = useCallback((scale: number) => {
+  const setTextureScale = useCallback((scale: number, selectedWallId: number | null) => {
     const s = Math.max(0.05, Math.min(1, scale))
     setTextureScaleState(s)
     const canvas = canvasInstanceRef.current
-    const layer = textureLayerRef.current
-    if (!canvas || !layer) return
+    if (!canvas) return
+    const layerKey = selectedWallId != null ? String(selectedWallId) : 'background'
+    const layer = textureLayersRef.current[layerKey]
+    if (!layer) return
     const fill = (layer as unknown as { fill?: { patternTransform?: number[] } }).fill
     if (fill && Array.isArray(fill.patternTransform)) {
       fill.patternTransform = [s, 0, 0, s, 0, 0]
@@ -964,5 +978,6 @@ export function useCanvas2D({
     textureScale,
     setTextureScale,
     hasTextureLayer,
+    isPhotoLoaded,
   }
 }

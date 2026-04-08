@@ -44,7 +44,7 @@ export function WallsPanel({ onStartCustomMask, isDrawingCustomMask, onCancelCus
         <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400">Стены</h2>
       </div>
 
-      <div className="flex-1 overflow-y-auto">
+      <div className="tour-walls-list flex-1 overflow-y-auto">
         {walls.length === 0 ? (
           <div className="px-4 py-8 text-center">
             <Square className="mx-auto mb-2 h-8 w-8 text-gray-300" />
@@ -125,7 +125,7 @@ export function WallsPanel({ onStartCustomMask, isDrawingCustomMask, onCancelCus
             type="button"
             onClick={onStartCustomMask}
             disabled={walls.length === 0}
-            className="flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-gray-300 px-3 py-2 text-xs text-gray-500 transition-colors hover:border-gray-400 hover:bg-gray-50 hover:text-gray-700 disabled:opacity-40"
+            className="tour-add-mask flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-gray-300 px-3 py-2 text-xs text-gray-500 transition-colors hover:border-gray-400 hover:bg-gray-50 hover:text-gray-700 disabled:opacity-40"
             title={walls.length === 0 ? 'Загрузите фото, чтобы добавить маску' : 'Нарисовать маску'}
           >
             <Plus className="h-3.5 w-3.5" />

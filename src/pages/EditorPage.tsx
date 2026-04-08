@@ -5,6 +5,7 @@ import { MaterialCatalog } from '@/components/Materials/MaterialCatalog'
 import { ColorPicker } from '@/components/Materials/ColorPicker'
 import { EditorHeader } from '@/components/Layout/EditorHeader'
 import { WallsPanel } from '@/components/Layout/WallsPanel'
+import { OnboardingTour } from '@/components/OnboardingTour'
 import { useVisualizerStore } from '@/store/useVisualizerStore'
 import { useWallStore } from '@/store/useWallStore'
 import { loadState } from '@/lib/persist'
@@ -52,6 +53,7 @@ export function EditorPage() {
 
   return (
     <div className="flex h-screen flex-col">
+      <OnboardingTour />
       <EditorHeader />
       <div className="flex flex-1 overflow-hidden">
         <WallsPanel
@@ -65,7 +67,7 @@ export function EditorPage() {
             onCustomMaskComplete={handleCustomMaskComplete}
           />
         </main>
-        <aside className="flex w-[320px] flex-shrink-0 flex-col gap-4 overflow-y-auto border-l border-gray-200 bg-white p-5">
+        <aside className="tour-materials-panel flex w-[320px] flex-shrink-0 flex-col gap-4 overflow-y-auto border-l border-gray-200 bg-white p-5">
           <section>
             <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">
               Материалы

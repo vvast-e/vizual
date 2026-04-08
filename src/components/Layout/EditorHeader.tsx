@@ -3,12 +3,13 @@ import { useUIStore } from '@/store/useUIStore'
 import { useVisualizerStore } from '@/store/useVisualizerStore'
 import { useWallStore } from '@/store/useWallStore'
 import { downloadDataUrl } from '@/lib/export-utils'
-import { Home, Building2, Download, RotateCcw } from 'lucide-react'
+import { Home, Building2, Download, RotateCcw, HelpCircle } from 'lucide-react'
 
 export function EditorHeader() {
   const navigate = useNavigate()
   const sceneMode = useUIStore((s) => s.sceneMode)
   const setSceneMode = useUIStore((s) => s.setSceneMode)
+  const setTourActive = useUIStore((s) => s.setTourActive)
 
   const handleExport = () => {
     const canvas = document.querySelector('canvas') as HTMLCanvasElement | null
@@ -24,6 +25,10 @@ export function EditorHeader() {
     useWallStore.getState().setWallTexture(0, null)
     localStorage.removeItem('vizual-state')
     navigate('/upload')
+  }
+
+  const handleRestartTour = () => {
+    setTourActive(true)
   }
 
   return (
@@ -63,6 +68,14 @@ export function EditorHeader() {
         </div>
       </div>
       <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={handleRestartTour}
+          className="flex items-center justify-center rounded-md p-1.5 text-gray-400 transition-colors hover:bg-blue-50 hover:text-blue-600"
+          title="Запустить обучение"
+        >
+          <HelpCircle className="h-4 w-4" />
+        </button>
         <button
           type="button"
           onClick={handleExport}

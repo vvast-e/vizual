@@ -20,6 +20,8 @@ interface UIState {
   wallVisibility: Record<number, boolean>
   /** Режим сцены: интерьер или экстерьер */
   sceneMode: SceneMode
+  /** Запущен ли обучающий тур */
+  tourActive: boolean
   setMaterialCatalogOpen: (open: boolean) => void
   setExportModalOpen: (open: boolean) => void
   setActiveToolbarPanel: (panel: string | null) => void
@@ -29,6 +31,7 @@ interface UIState {
   setHideWallMasks: (v: boolean) => void
   setSceneMode: (mode: SceneMode) => void
   toggleWallVisibility: (wallId: number) => void
+  setTourActive: (v: boolean) => void
 }
 
 export const useUIStore = create<UIState>((set) => ({
@@ -41,6 +44,7 @@ export const useUIStore = create<UIState>((set) => ({
   hideWallMasks: false,
   wallVisibility: {},
   sceneMode: 'interior',
+  tourActive: false,
   setMaterialCatalogOpen: (materialCatalogOpen) => set({ materialCatalogOpen }),
   setExportModalOpen: (exportModalOpen) => set({ exportModalOpen }),
   setActiveToolbarPanel: (activeToolbarPanel) => set({ activeToolbarPanel }),
@@ -56,4 +60,5 @@ export const useUIStore = create<UIState>((set) => ({
         [wallId]: s.wallVisibility[wallId] === false ? true : false,
       },
     })),
+  setTourActive: (tourActive) => set({ tourActive }),
 }))

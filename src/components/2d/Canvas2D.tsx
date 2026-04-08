@@ -68,6 +68,7 @@ export function Canvas2D({
     textureScale,
     setTextureScale,
     hasTextureLayer,
+    isPhotoLoaded,
   } = useCanvas2D({
     canvasRef,
     containerWidth: canvasSize.width,
@@ -83,10 +84,10 @@ export function Canvas2D({
   }, [photoDataUrl, isReady, loadPhotoFromDataUrl])
 
   useEffect(() => {
-    if (isReady && walls.length > 0 && wallImageSize) {
+    if (isReady && isPhotoLoaded && walls.length > 0 && wallImageSize) {
       setWallOverlays(walls, wallImageSize)
     }
-  }, [isReady, walls, wallImageSize, wallTextures, hideWallMasks, wallVisibility, setWallOverlays])
+  }, [isReady, isPhotoLoaded, walls, wallImageSize, wallTextures, hideWallMasks, wallVisibility, setWallOverlays])
 
   useEffect(() => {
     if (isReady) {
@@ -157,18 +158,18 @@ export function Canvas2D({
               type="button"
               onClick={handleApplyTexture}
               disabled={!selectedMaterial}
-              className="rounded-lg bg-gray-800 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-gray-700 disabled:opacity-50"
+              className="tour-apply-texture rounded-lg bg-gray-800 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-gray-700 disabled:opacity-50"
             >
               Применить текстуру
             </button>
             <button
               type="button"
               onClick={() => setEditWallCorners(!editWallCorners)}
-              className={`rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
+              className={`tour-edit-mask rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
                 editWallCorners ? 'border-blue-700 bg-blue-50 text-blue-800' : 'border-gray-300 text-gray-700 hover:bg-gray-50'
               }`}
             >
-              Править углы
+              Править маску
             </button>
             {editWallCorners && sceneMode === 'exterior' && (
               <div className="flex items-center rounded-lg border border-blue-200 bg-blue-50 p-0.5">
@@ -217,7 +218,7 @@ export function Canvas2D({
                   min={5}
                   max={100}
                   value={Math.round(textureScale * 100)}
-                  onChange={(e) => setTextureScale(Number(e.target.value) / 100)}
+                  onChange={(e) => setTextureScale(Number(e.target.value) / 100, selectedWallId)}
                   className="h-2 w-28 cursor-pointer accent-gray-800"
                   aria-label="Масштаб текстуры"
                 />
@@ -231,7 +232,7 @@ export function Canvas2D({
       )}
       <div
         ref={containerRef}
-        className="relative flex-1 overflow-hidden rounded-lg border border-gray-200 bg-gray-100 shadow-sm"
+        className="tour-canvas-container relative flex-1 overflow-hidden rounded-lg border border-gray-200 bg-gray-100 shadow-sm"
         style={{ minHeight: 200 }}
       >
         <canvas
