@@ -1,10 +1,11 @@
 import { useCallback, useMemo } from 'react'
 import { useMaterialStore } from '@/store/useMaterialStore'
-import { loadTextureImage, applyColorToTexture } from '@/lib/texture-processor'
+import { loadTextureImage } from '@/lib/texture-processor'
+import { applyHsvColorShift } from '@/lib/color-utils'
 import { PRESET_COLORS } from '@/lib/constants'
 
 /**
- * Колоризация текстуры: загрузка + наложение цвета (multiply), превью.
+ * Колоризация текстуры: загрузка + HSV-сдвиг цвета (сохраняет фактуру).
  */
 export function useColorize() {
   const selectedColor = useMaterialStore((s) => s.selectedColor)
@@ -25,7 +26,7 @@ export function useColorize() {
     ): HTMLCanvasElement => {
       const hex = colorHex ?? selectedColor?.hex ?? '#ffffff'
       const op = opacity ?? colorizeOpacity
-      return applyColorToTexture(source, hex, op)
+      return applyHsvColorShift(source, hex, op)
     },
     [selectedColor?.hex, colorizeOpacity]
   )

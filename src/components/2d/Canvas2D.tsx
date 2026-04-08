@@ -4,6 +4,7 @@ import { useVisualizerStore } from '@/store/useVisualizerStore'
 import { useMaterialStore } from '@/store/useMaterialStore'
 import { useUIStore } from '@/store/useUIStore'
 import { useWallStore } from '@/store/useWallStore'
+import { useColorize } from '@/hooks/useColorize'
 
 export interface Canvas2DProps {
   className?: string
@@ -39,6 +40,8 @@ export function Canvas2D({
   const editCornersMode = useUIStore((s) => s.editCornersMode)
   const setEditCornersMode = useUIStore((s) => s.setEditCornersMode)
 
+  const { selectedColor, colorizeOpacity, getColorizedTextureUrl } = useColorize()
+
   useEffect(() => {
     const el = containerRef.current
     if (!el) return
@@ -57,7 +60,6 @@ export function Canvas2D({
   const {
     isReady,
     loadPhotoFromDataUrl,
-    clearCanvas,
     setWallOverlays,
     applyTexture,
     applyTextureToWall,
@@ -97,10 +99,19 @@ export function Canvas2D({
     syncCornerHandles(selectedWallId)
   }, [isReady, selectedWallId, editWallCorners, editCornersMode, syncCornerHandles])
 
+  /** Получить URL текстуры с учётом HSV-колоризации */
+  const getTextureUrl = useCallback(async (rawUrl: string): Promise<string> => {
+    if (selectedColor && selectedColor.hex !== '#ffffff' && colorizeOpacity > 0.001) {
+      return getColorizedTextureUrl(rawUrl)
+    }
+    return rawUrl
+  }, [selectedColor, colorizeOpacity, getColorizedTextureUrl])
+
   const handleApplyTexture = useCallback(async () => {
-    const url = selectedMaterial?.texture.url
-    if (!url) return
+    const rawUrl = selectedMaterial?.texture.url
+    if (!rawUrl) return
     try {
+      const url = await getTextureUrl(rawUrl)
       if (selectedWallId != null && walls.length > 0 && wallImageSize) {
         const wall = walls.find((w) => w.id === selectedWallId)
         if (wall && wall.corners.length >= 3) {
@@ -116,9 +127,27 @@ export function Canvas2D({
       }
       await applyTexture(url, 'repeat')
     } catch (err) {
-      console.error('Не удалось наложить текстуру:', url, err)
+      console.error('Не удалось наложить текстуру:', rawUrl, err)
     }
-  }, [selectedMaterial?.texture.url, selectedWallId, walls, wallImageSize, applyTexture, applyTextureToWall, setWallTexture])
+  }, [selectedMaterial?.texture.url, selectedWallId, walls, wallImageSize, applyTexture, applyTextureToWall, setWallTexture, getTextureUrl])
+
+  // Авто-применение при смене цвета (debounce 300ms)
+  const colorKeyRef = useRef<string>('')
+  useEffect(() => {
+    const key = `${selectedColor?.hex ?? ''}_${colorizeOpacity}`
+    if (colorKeyRef.current === '') {
+      colorKeyRef.current = key
+      return
+    }
+    if (colorKeyRef.current === key) return
+    colorKeyRef.current = key
+
+    if (!isReady || !selectedMaterial || !hasTextureLayer) return
+    const timer = setTimeout(() => {
+      handleApplyTexture()
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [selectedColor?.hex, colorizeOpacity, isReady, selectedMaterial, hasTextureLayer, handleApplyTexture])
 
   return (
     <div className={`flex flex-1 flex-col gap-2 overflow-hidden ${className}`}>
@@ -197,13 +226,7 @@ export function Canvas2D({
                 </span>
               </div>
             )}
-            <button
-              type="button"
-              onClick={clearCanvas}
-              className="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 transition-colors hover:bg-gray-50"
-            >
-              Очистить
-            </button>
+
           </div>
       )}
       <div
