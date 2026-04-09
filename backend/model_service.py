@@ -138,13 +138,18 @@ async def sam_segment(
 
     outputs = sam_model(**inputs)
 
+    # SAM returns 3 masks per prompt. We pick the one with the highest IoU score
+    # to avoid fragmented or weirdly shaped boundaries.
+    iou_scores = outputs.iou_scores.detach().cpu().numpy()
+    best_mask_idx = int(np.argmax(iou_scores[0, 0]))
+
     masks = sam_processor.image_processor.post_process_masks(
-        outputs.pred_masks.cpu(),
-        inputs["original_sizes"].cpu(),
-        inputs["reshaped_input_sizes"].cpu(),
+        outputs.pred_masks.detach().cpu(),
+        inputs["original_sizes"].detach().cpu(),
+        inputs["reshaped_input_sizes"].detach().cpu(),
     )
 
-    mask_np = masks[0][0, 0].numpy().astype(np.uint8) * 255
+    mask_np = masks[0][0, best_mask_idx].numpy().astype(np.uint8) * 255
 
     ok, buf = cv2.imencode(".png", mask_np)
     if not ok:

@@ -19,7 +19,7 @@ GDINO_URL = os.getenv("EXTERIOR_GDINO_URL", "http://127.0.0.1:8001/gdino")
 SAM_URL = os.getenv("EXTERIOR_SAM_URL", "http://127.0.0.1:8001/sam")
 TIMEOUT_S = int(os.getenv("EXTERIOR_TIMEOUT_MS", "30000")) / 1000.0
 SCORE_THRESH_BUILDING = float(os.getenv("EXTERIOR_SCORE_THRESH_BUILDING", "0.3"))
-SCORE_THRESH_OPENINGS = float(os.getenv("EXTERIOR_SCORE_THRESH_OPENINGS", "0.35"))
+SCORE_THRESH_OPENINGS = float(os.getenv("EXTERIOR_SCORE_THRESH_OPENINGS", "0.22"))
 
 # Debug output for investigating mask->front rendering.
 # Saves intermediate PNGs + prints summary to stdout.
@@ -49,13 +49,13 @@ def _bbox_inside(inner: list[float], outer: list[float], threshold: float = 0.6)
 
 
 async def detect_building_bbox(image_bytes: bytes) -> list[float] | None:
-    """Call GroundingDINO to find the largest building/house bbox."""
+    """Call GroundingDINO to find the union of all wall/facade bboxes."""
     async with httpx.AsyncClient(timeout=TIMEOUT_S) as client:
         resp = await client.post(
             GDINO_URL,
             files={"image": ("photo.jpg", image_bytes, "image/jpeg")},
             data={
-                "prompt": "house . building . facade",
+                "prompt": "wall . external wall . facade",
                 "score_threshold": str(SCORE_THRESH_BUILDING),
             },
         )
@@ -64,8 +64,14 @@ async def detect_building_bbox(image_bytes: bytes) -> list[float] | None:
     bboxes = data.get("bboxes", [])
     if not bboxes:
         return None
-    largest = max(bboxes, key=lambda b: _bbox_area(b["bbox"]))
-    return largest["bbox"]
+    
+    # Calculate the union of all detected building parts
+    min_x = min(b["bbox"][0] for b in bboxes)
+    min_y = min(b["bbox"][1] for b in bboxes)
+    max_x = max(b["bbox"][2] for b in bboxes)
+    max_y = max(b["bbox"][3] for b in bboxes)
+    
+    return [min_x, min_y, max_x, max_y]
 
 
 async def detect_openings_bboxes(
@@ -124,10 +130,15 @@ def postprocess_masks(
     holes_mask: np.ndarray,
     dilate_px: int = 4,
 ) -> np.ndarray:
-    """Subtract dilated holes from wall mask, clean small components."""
+    """Subtract dilated holes from wall mask, clean small components and smooth edges."""
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (dilate_px * 2 + 1, dilate_px * 2 + 1))
     holes_dilated = cv2.dilate(holes_mask, kernel, iterations=1)
     result = cv2.bitwise_and(wall_mask, cv2.bitwise_not(holes_dilated))
+
+    # Apply morphological CLOSE and OPEN to smooth jagged edges from SAM
+    smooth_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+    result = cv2.morphologyEx(result, cv2.MORPH_CLOSE, smooth_kernel, iterations=2)
+    result = cv2.morphologyEx(result, cv2.MORPH_OPEN, smooth_kernel, iterations=1)
 
     num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(result, connectivity=8)
     total_area = result.shape[0] * result.shape[1]
