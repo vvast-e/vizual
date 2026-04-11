@@ -1,11 +1,8 @@
 """
-Local model service: GroundingDINO (bbox) + SAM (mask refinement) — PyTorch.
+Local model service: SegFormer semantic segmentation — PyTorch.
 Run: uvicorn model_service:app --port 8001
-
-Models loaded via transformers directly (no ONNX export needed).
 """
 import io
-import json
 import os
 from contextlib import asynccontextmanager
 
@@ -18,141 +15,108 @@ os.environ.setdefault("HF_HOME", _HF_HOME)
 import cv2
 import numpy as np
 import torch
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+import torch.nn as nn
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import Response
 from PIL import Image
 
 DEVICE = "cpu"
 
-gdino_model = None
-gdino_processor = None
-sam_model = None
-sam_processor = None
+segformer_model = None
+segformer_processor = None
 
+# ADE20K labels to map for our exterior pipeline
+WALL_TARGET_TERMS = ["wall", "building", "house", "facade", "edifice", "hut", "hovel", "shed", "cabin"]
+HOLE_TARGET_TERMS = ["window", "windowpane", "door", "double door", "glass", "blind", "screen door"]
+BALCONY_TERMS = ["balcony"] # Can be treated as holes or excluded entirely
 
-def _load_all_models():
-    global gdino_model, gdino_processor, sam_model, sam_processor
+wall_class_ids = []
+hole_class_ids = []
+balcony_class_ids = []
 
-    from transformers import AutoModelForZeroShotObjectDetection, AutoProcessor
-    from transformers import SamModel, SamProcessor
+def _load_models():
+    global segformer_model, segformer_processor, wall_class_ids, hole_class_ids, balcony_class_ids
 
-    # GroundingDINO-tiny
-    gdino_id = "IDEA-Research/grounding-dino-tiny"
-    print(f"[model_service] Loading GroundingDINO from {gdino_id}...")
-    gdino_processor = AutoProcessor.from_pretrained(gdino_id, backend="torchvision")
-    gdino_model = AutoModelForZeroShotObjectDetection.from_pretrained(gdino_id).to(DEVICE)
-    gdino_model.eval()
-    print("[model_service] GroundingDINO loaded.")
+    from transformers import SegformerImageProcessor, SegformerForSemanticSegmentation
 
-    # SAM ViT-Base (stable, tested)
-    sam_id = "facebook/sam-vit-base"
-    print(f"[model_service] Loading SAM from {sam_id}...")
-    sam_processor = SamProcessor.from_pretrained(sam_id)
-    sam_model = SamModel.from_pretrained(sam_id).to(DEVICE)
-    sam_model.eval()
-    print("[model_service] SAM loaded.")
+    # SegFormer B1 is extremely fast on CPU and gives excellent architectural segmentation
+    model_id = "nvidia/segformer-b1-finetuned-ade-512-512"
+    print(f"[model_service] Loading SegFormer from {model_id}...")
+    segformer_processor = SegformerImageProcessor.from_pretrained(model_id)
+    segformer_model = SegformerForSemanticSegmentation.from_pretrained(model_id).to(DEVICE)
+    segformer_model.eval()
+
+    # Pre-compute class mappings
+    id2label = segformer_model.config.id2label
+    for cls_id, label in id2label.items():
+        label_lower = label.lower()
+        if any(term in label_lower for term in WALL_TARGET_TERMS):
+            wall_class_ids.append(cls_id)
+        elif any(term in label_lower for term in HOLE_TARGET_TERMS):
+            hole_class_ids.append(cls_id)
+        elif any(term in label_lower for term in BALCONY_TERMS):
+            balcony_class_ids.append(cls_id)
+            
+    print(f"[model_service] Mapped {len(wall_class_ids)} Wall classes and {len(hole_class_ids)} Hole classes.")
+    print("[model_service] SegFormer loaded successfully.")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    _load_all_models()
+    _load_models()
     yield
 
 
-app = FastAPI(title="Model Service (GroundingDINO + SAM) ONNX", lifespan=lifespan)
+app = FastAPI(title="Model Service (SegFormer)", lifespan=lifespan)
 
-
-def _read_image_pil(image_bytes: bytes) -> Image.Image:
-    return Image.open(io.BytesIO(image_bytes)).convert("RGB")
-
-
-@app.post("/gdino")
-async def grounding_dino_detect(
-    image: UploadFile = File(...),
-    prompt: str = Form("house . building . facade"),
-    score_threshold: float = Form(0.3),
-):
-    """Return bounding boxes for objects matching the text prompt."""
-    if gdino_model is None or gdino_processor is None:
-        raise HTTPException(503, "GroundingDINO not loaded yet")
+@app.post("/segformer")
+async def segformer_predict(image: UploadFile = File(...)):
+    """
+    Returns a PNG image containing 3 channels (BGR):
+    - R (Red):   Pixels belonging to Walls / Buildings
+    - G (Green): Pixels belonging to Windows / Doors
+    - B (Blue):  Pixels belonging to Balconies
+    """
+    if segformer_model is None or segformer_processor is None:
+        raise HTTPException(503, "SegFormer not loaded yet")
 
     image_bytes = await image.read()
-    pil_image = _read_image_pil(image_bytes)
+    try:
+        pil_image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    except Exception as e:
+        raise HTTPException(400, f"Invalid image: {e}")
 
-    inputs = gdino_processor(images=pil_image, text=prompt, return_tensors="pt")
+    inputs = segformer_processor(images=pil_image, return_tensors="pt").to(DEVICE)
 
-    outputs = gdino_model(**inputs)
-
-    results = gdino_processor.post_process_grounded_object_detection(
-        outputs,
-        inputs["input_ids"],
-        box_threshold=score_threshold,
-        text_threshold=score_threshold,
-        target_sizes=[pil_image.size[::-1]],
-    )[0]
-
-    bboxes = []
-    for box, score, label in zip(
-        results["boxes"].detach().cpu().numpy(),
-        results["scores"].detach().cpu().numpy(),
-        results["labels"],
-    ):
-        x1, y1, x2, y2 = box.tolist()
-        bboxes.append({
-            "bbox": [round(x1, 1), round(y1, 1), round(x2, 1), round(y2, 1)],
-            "score": round(float(score), 4),
-            "label": label,
-        })
-
-    return {"bboxes": bboxes}
-
-
-@app.post("/sam")
-async def sam_segment(
-    image: UploadFile = File(...),
-    bbox: str = Form(...),
-):
-    """Return a binary mask (PNG, 1-channel, 0/255) for the given bbox prompt."""
-    if sam_model is None or sam_processor is None:
-        raise HTTPException(503, "SAM not loaded yet")
-
-    image_bytes = await image.read()
-    pil_image = _read_image_pil(image_bytes)
-
-    bbox_parsed = json.loads(bbox)
-    if len(bbox_parsed) != 4:
-        raise HTTPException(400, "bbox must be [x1, y1, x2, y2]")
-
-    input_boxes = [[[
-        float(bbox_parsed[0]),
-        float(bbox_parsed[1]),
-        float(bbox_parsed[2]),
-        float(bbox_parsed[3]),
-    ]]]
-
-    inputs = sam_processor(
-        pil_image,
-        input_boxes=input_boxes,
-        return_tensors="pt",
+    with torch.no_grad():
+        outputs = segformer_model(**inputs)
+        
+    logits = outputs.logits
+    # Rescale logits back to original image size
+    upsampled_logits = nn.functional.interpolate(
+        logits,
+        size=pil_image.size[::-1], # (height, width)
+        mode="bilinear",
+        align_corners=False
     )
+    
+    # Get the class index with highest probability for each pixel
+    pred = upsampled_logits.argmax(dim=1)[0].cpu().numpy()
 
-    outputs = sam_model(**inputs)
+    # Map classes to binary masks
+    wall_mask = np.isin(pred, wall_class_ids).astype(np.uint8) * 255
+    holes_mask = np.isin(pred, hole_class_ids).astype(np.uint8) * 255
+    balcony_mask = np.isin(pred, balcony_class_ids).astype(np.uint8) * 255
 
-    # SAM returns 3 masks per prompt. We pick the one with the highest IoU score
-    # to avoid fragmented or weirdly shaped boundaries.
-    iou_scores = outputs.iou_scores.detach().cpu().numpy()
-    best_mask_idx = int(np.argmax(iou_scores[0, 0]))
+    # Encode all masks into a single 3-channel image (BGR format for OpenCV)
+    # Red = Wall, Green = Holes, Blue = Balconies
+    combined = np.zeros((pred.shape[0], pred.shape[1], 3), dtype=np.uint8)
+    combined[:, :, 2] = wall_mask      # Red
+    combined[:, :, 1] = holes_mask     # Green
+    combined[:, :, 0] = balcony_mask   # Blue
 
-    masks = sam_processor.image_processor.post_process_masks(
-        outputs.pred_masks.detach().cpu(),
-        inputs["original_sizes"].detach().cpu(),
-        inputs["reshaped_input_sizes"].detach().cpu(),
-    )
-
-    mask_np = masks[0][0, best_mask_idx].numpy().astype(np.uint8) * 255
-
-    ok, buf = cv2.imencode(".png", mask_np)
+    ok, buf = cv2.imencode(".png", combined)
     if not ok:
-        raise HTTPException(500, "Failed to encode mask PNG")
+        raise HTTPException(500, "Failed to encode prediction masks")
 
     return Response(content=buf.tobytes(), media_type="image/png")
