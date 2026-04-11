@@ -293,9 +293,10 @@ async def run_exterior_pipeline(image_bytes: bytes, image_width: int, image_heig
     balcony_mask = masks_bgr[:, :, 0]   # Blue channel
     
     # 1. Clean up wall mask FIRST (fill tiny holes/errors before we cut real windows)
-    smooth_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
-    wall_mask = cv2.morphologyEx(wall_mask, cv2.MORPH_CLOSE, smooth_kernel, iterations=2)
-    wall_mask = cv2.morphologyEx(wall_mask, cv2.MORPH_OPEN, smooth_kernel, iterations=1)
+    # Using a much smaller kernel (3x3) so we don't accidentally erase large architectural features
+    smooth_kernel_small = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    wall_mask = cv2.morphologyEx(wall_mask, cv2.MORPH_CLOSE, smooth_kernel_small, iterations=1)
+    wall_mask = cv2.morphologyEx(wall_mask, cv2.MORPH_OPEN, smooth_kernel_small, iterations=1)
 
     # 2. Split into Left/Right walls if there is a strong corner seam
     img_arr = np.frombuffer(image_bytes, dtype=np.uint8)
@@ -306,23 +307,21 @@ async def run_exterior_pipeline(image_bytes: bytes, image_width: int, image_heig
     split_walls = _auto_split_by_corner_seam(wall_mask, image_bgr, image_width, image_height)
 
     # 3. Process holes & exclusions (windows, sky, trees)
-    # We dilate the holes significantly to ensure window frames/reflections 
-    # are completely carved out of the wall mask.
+    # Dilate holes slightly so window frames are carved out
     exclude_mask = cv2.bitwise_or(holes_mask, balcony_mask)
-    kernel_holes = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
+    kernel_holes = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
     exclude_dilated = cv2.dilate(exclude_mask, kernel_holes, iterations=1)
 
     component_masks = []
     min_area = image_width * image_height * EXTERIOR_MIN_WALL_AREA_RATIO
 
-    # 4. Subtract holes from each wall piece, clean it, and extract components
+    # 4. Subtract holes from each wall piece, clean it gently, and extract components
     for part_mask in split_walls:
         part_minus_holes = cv2.bitwise_and(part_mask, cv2.bitwise_not(exclude_dilated))
         
-        # Smooth the final mask for this specific wall
-        smooth_final = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        # Very gentle smoothing for the final mask
+        smooth_final = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
         part_minus_holes = cv2.morphologyEx(part_minus_holes, cv2.MORPH_OPEN, smooth_final, iterations=1)
-        part_minus_holes = cv2.morphologyEx(part_minus_holes, cv2.MORPH_CLOSE, smooth_final, iterations=1)
 
         num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(part_minus_holes, connectivity=8)
         

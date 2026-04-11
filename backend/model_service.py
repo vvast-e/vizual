@@ -39,8 +39,8 @@ def _load_models():
 
     from transformers import SegformerImageProcessor, SegformerForSemanticSegmentation
 
-    # SegFormer B1 is extremely fast on CPU and gives excellent architectural segmentation
-    model_id = "nvidia/segformer-b1-finetuned-ade-512-512"
+    # SegFormer B3 is a heavier, much more accurate model for architectural details
+    model_id = "nvidia/segformer-b3-finetuned-ade-512-512"
     print(f"[model_service] Loading SegFormer from {model_id}...")
     segformer_processor = SegformerImageProcessor.from_pretrained(model_id)
     segformer_model = SegformerForSemanticSegmentation.from_pretrained(model_id).to(DEVICE)
