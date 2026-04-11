@@ -29,31 +29,47 @@ def encode_mask_png_base64(mask: np.ndarray) -> str:
         raise ValueError("Failed to encode mask PNG")
     return base64.b64encode(buf.tobytes()).decode("ascii")
 
-def _order_rect_corners_tl_bl_br_tr(box_pts: np.ndarray) -> list[list[int]]:
-    """Sort 4 points of minAreaRect into [TL, BL, BR, TR] order."""
-    pts = box_pts.reshape(4, 2).astype(float)
-    cx = pts[:, 0].mean()
+def _align_perspective_corners(component_mask: np.ndarray) -> list[list[int]]:
+    """
+    Finds perspective corners [TL, BL, BR, TR] bounded strictly to the top/bottom edges of the wall.
+    Prevents minAreaRect from creating severely rotated quads that break frontend texturing.
+    """
+    y_coords, x_coords = np.where(component_mask > 0)
+    if len(y_coords) == 0:
+        return [[0,0], [0,1], [1,1], [1,0]]
+
+    # 1. Find bounding box of the mask
+    min_x, max_x = np.min(x_coords), np.max(x_coords)
+    min_y, max_y = np.min(y_coords), np.max(y_coords)
+
+    # 2. Extract top and bottom bands (e.g. top 15% and bottom 15%)
+    h = max_y - min_y
+    band = max(10, int(h * 0.15))
     
-    left_pts = pts[pts[:, 0] <= cx]
-    right_pts = pts[pts[:, 0] > cx]
+    top_band = np.where((component_mask > 0) & (np.mgrid[0:component_mask.shape[0], 0:component_mask.shape[1]][0] <= min_y + band))
+    bot_band = np.where((component_mask > 0) & (np.mgrid[0:component_mask.shape[0], 0:component_mask.shape[1]][0] >= max_y - band))
 
-    if len(left_pts) < 2:
-        left_pts = pts[np.argsort(pts[:, 0])[:2]]
-        right_pts = pts[np.argsort(pts[:, 0])[2:]]
-    if len(right_pts) < 2:
-        right_pts = pts[np.argsort(pts[:, 0])[2:]]
-        left_pts = pts[np.argsort(pts[:, 0])[:2]]
+    # Fallback to simple bbox if bands are too thin
+    if len(top_band[0]) == 0 or len(bot_band[0]) == 0:
+        return [[min_x, min_y], [min_x, max_y], [max_x, max_y], [max_x, min_y]]
 
-    tl = left_pts[np.argmin(left_pts[:, 1])]
-    bl = left_pts[np.argmax(left_pts[:, 1])]
-    tr = right_pts[np.argmin(right_pts[:, 1])]
-    br = right_pts[np.argmax(right_pts[:, 1])]
+    # 3. Find left/right extremes in the top band
+    tl_x = np.min(top_band[1])
+    tl_y = top_band[0][np.argmin(top_band[1])]
+    tr_x = np.max(top_band[1])
+    tr_y = top_band[0][np.argmax(top_band[1])]
+
+    # 4. Find left/right extremes in the bottom band
+    bl_x = np.min(bot_band[1])
+    bl_y = bot_band[0][np.argmin(bot_band[1])]
+    br_x = np.max(bot_band[1])
+    br_y = bot_band[0][np.argmax(bot_band[1])]
 
     return [
-        [int(round(tl[0])), int(round(tl[1]))],
-        [int(round(bl[0])), int(round(bl[1]))],
-        [int(round(br[0])), int(round(br[1]))],
-        [int(round(tr[0])), int(round(tr[1]))],
+        [int(tl_x), int(tl_y)],
+        [int(bl_x), int(bl_y)],
+        [int(br_x), int(br_y)],
+        [int(tr_x), int(tr_y)],
     ]
 
 def _extract_wall_from_component(component_mask: np.ndarray) -> dict | None:
@@ -64,10 +80,8 @@ def _extract_wall_from_component(component_mask: np.ndarray) -> dict | None:
     if cv2.contourArea(contour) < 100:
         return None
 
-    # Fallback quad (perspective base)
-    rect = cv2.minAreaRect(contour)
-    box_pts = cv2.boxPoints(rect)
-    corners = _order_rect_corners_tl_bl_br_tr(box_pts)
+    # New: aligned perspective corners (prevents diagonal rotations)
+    corners = _align_perspective_corners(component_mask)
 
     perimeter = cv2.arcLength(contour, True)
     eps = EXTERIOR_POLYGON_EPS_RATIO * perimeter
@@ -291,18 +305,25 @@ async def run_exterior_pipeline(image_bytes: bytes, image_width: int, image_heig
 
     split_walls = _auto_split_by_corner_seam(wall_mask, image_bgr, image_width, image_height)
 
-    # 3. Process holes & balconies
-    # We dilate the holes slightly to make sure window frames are completely removed from walls
+    # 3. Process holes & exclusions (windows, sky, trees)
+    # We dilate the holes significantly to ensure window frames/reflections 
+    # are completely carved out of the wall mask.
     exclude_mask = cv2.bitwise_or(holes_mask, balcony_mask)
-    kernel_holes = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    kernel_holes = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
     exclude_dilated = cv2.dilate(exclude_mask, kernel_holes, iterations=1)
 
     component_masks = []
     min_area = image_width * image_height * EXTERIOR_MIN_WALL_AREA_RATIO
 
-    # 4. Subtract holes from each wall piece and extract components
+    # 4. Subtract holes from each wall piece, clean it, and extract components
     for part_mask in split_walls:
         part_minus_holes = cv2.bitwise_and(part_mask, cv2.bitwise_not(exclude_dilated))
+        
+        # Smooth the final mask for this specific wall
+        smooth_final = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        part_minus_holes = cv2.morphologyEx(part_minus_holes, cv2.MORPH_OPEN, smooth_final, iterations=1)
+        part_minus_holes = cv2.morphologyEx(part_minus_holes, cv2.MORPH_CLOSE, smooth_final, iterations=1)
+
         num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(part_minus_holes, connectivity=8)
         
         for i in range(1, num_labels):

@@ -104,12 +104,15 @@ async def segformer_predict(image: UploadFile = File(...)):
     pred = upsampled_logits.argmax(dim=1)[0].cpu().numpy()
 
     # Map classes to binary masks
+    # Wall is strictly the wall/building classes.
     wall_mask = np.isin(pred, wall_class_ids).astype(np.uint8) * 255
-    holes_mask = np.isin(pred, hole_class_ids).astype(np.uint8) * 255
+    
+    # Holes: Everything else that is NOT a wall! This guarantees windows, 
+    # reflections, sky, trees, etc. are completely carved out of the facade mask.
+    holes_mask = (~np.isin(pred, wall_class_ids)).astype(np.uint8) * 255
     balcony_mask = np.isin(pred, balcony_class_ids).astype(np.uint8) * 255
 
     # Encode all masks into a single 3-channel image (BGR format for OpenCV)
-    # Red = Wall, Green = Holes, Blue = Balconies
     combined = np.zeros((pred.shape[0], pred.shape[1], 3), dtype=np.uint8)
     combined[:, :, 2] = wall_mask      # Red
     combined[:, :, 1] = holes_mask     # Green
