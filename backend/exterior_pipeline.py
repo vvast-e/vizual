@@ -231,188 +231,6 @@ def _find_corner_indices(contour: np.ndarray, angle_deg: float = EXTERIOR_CORNER
     return indices
 
 
-def _contour_split_component(
-    component_mask: np.ndarray,
-    min_area: int,
-    max_walls: int,
-) -> list[np.ndarray]:
-    """Try to split a single component by contour corners. Returns list of sub-masks."""
-    contours, _ = cv2.findContours(component_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if not contours:
-        return [component_mask]
-    contour = max(contours, key=cv2.contourArea)
-    if cv2.contourArea(contour) < min_area * 2:
-        return [component_mask]
-
-    eps = EXTERIOR_CONTOUR_EPS_RATIO * cv2.arcLength(contour, True)
-    approx = cv2.approxPolyDP(contour, eps, True)
-    if len(approx) < 4:
-        return [component_mask]
-
-    corners = _find_corner_indices(approx)
-    if not corners:
-        return [component_mask]
-
-    best_split: tuple[np.ndarray, np.ndarray] | None = None
-    best_ratio = 0.0
-
-    pts = approx.reshape(-1, 2)
-    for idx in corners:
-        p = pts[idx]
-        px, py = float(p[0]), float(p[1])
-        y_top = max(0, int(py - 20))
-        y_bot = min(component_mask.shape[0] - 1, int(py + 20))
-        line_res = _split_mask_by_line(component_mask, px, y_top, px, y_bot)
-        if line_res is None:
-            continue
-        left, right = line_res
-        a1, a2 = cv2.countNonZero(left), cv2.countNonZero(right)
-        total = a1 + a2
-        if total < 100:
-            continue
-        r1, r2 = a1 / total, a2 / total
-        if r1 < EXTERIOR_MIN_SPLIT_RATIO or r2 < EXTERIOR_MIN_SPLIT_RATIO:
-            continue
-        ratio = min(r1, r2)
-        if ratio > best_ratio:
-            best_ratio = ratio
-            best_split = (left, right)
-
-    if best_split is None:
-        return [component_mask]
-
-    left, right = best_split
-    result: list[np.ndarray] = []
-
-    def add_rec(m: np.ndarray) -> None:
-        if len(result) >= max_walls:
-            return
-        area = cv2.countNonZero(m)
-        if area < min_area:
-            return
-        sub = _contour_split_component(m, min_area, max_walls - len(result))
-        for s in sub:
-            if cv2.countNonZero(s) >= min_area and len(result) < max_walls:
-                result.append(s)
-
-    add_rec(left)
-    add_rec(right)
-    return result if result else [component_mask]
-
-
-def _inner_corner_split_component(
-    component_mask: np.ndarray,
-    min_area: int,
-    max_walls: int,
-) -> list[np.ndarray]:
-    """
-    Split L-shaped single component into 2+ parts by its inner corner.
-    Перебирает несколько глубоких convexity defects и линии: вертикаль через pivot,
-    биссектриса и перпендикуляр. Скоринг: баланс площадей + предпочтение вертикали
-    (горизонтальный «верх/низ» часто выигрывает только по balance).
-    """
-    contours, _ = cv2.findContours(component_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if not contours:
-        return [component_mask]
-    contour = max(contours, key=cv2.contourArea)
-    if cv2.contourArea(contour) < min_area:
-        return [component_mask]
-
-    hull = cv2.convexHull(contour, returnPoints=False)
-    if hull is None or len(hull) < 3:
-        return [component_mask]
-
-    defects = cv2.convexityDefects(contour, hull)
-    if defects is None or len(defects) == 0:
-        return [component_mask]
-
-    contour_pts = contour.reshape(-1, 2)
-    H = component_mask.shape[0]
-    defect_depths: list[tuple[float, int]] = []
-    for i in range(defects.shape[0]):
-        s_idx, e_idx, f_idx, depth = defects[i, 0]
-        d = float(depth) / 256.0
-        defect_depths.append((d, i))
-    defect_depths.sort(key=lambda t: t[0], reverse=True)
-    tried_idx = [idx for _, idx in defect_depths[: min(4, len(defect_depths))]]
-
-    w_vert = EXTERIOR_PREFER_VERTICAL_SPLIT
-    w_bal = 1.0 - w_vert
-
-    def candidates_for_defect(def_i: int) -> list[tuple[np.ndarray, np.ndarray]]:
-        s_idx, e_idx, f_idx, _ = defects[def_i, 0]
-        s_idx, e_idx, f_idx = int(s_idx), int(e_idx), int(f_idx)
-        p = contour_pts[f_idx].astype(float)
-        s = contour_pts[s_idx].astype(float)
-        e = contour_pts[e_idx].astype(float)
-        px = float(p[0])
-        cands: list[tuple[np.ndarray, np.ndarray]] = [
-            (np.array([px, 0.0], dtype=np.float64), np.array([px, float(H - 1)], dtype=np.float64)),
-        ]
-        v1 = s - p
-        v2 = e - p
-        n1 = np.linalg.norm(v1)
-        n2 = np.linalg.norm(v2)
-        if n1 < 1 or n2 < 1:
-            return cands
-        u1 = v1 / n1
-        u2 = v2 / n2
-        bis = u1 + u2
-        if np.linalg.norm(bis) < 1e-6:
-            bis = np.array([-u1[1], u1[0]], dtype=np.float64)
-        else:
-            bis = bis / np.linalg.norm(bis)
-        perp = np.array([-bis[1], bis[0]], dtype=np.float64)
-        L = 1000.0
-        cands.append((p - bis * L, p + bis * L))
-        cands.append((p - perp * L, p + perp * L))
-        return cands
-
-    best_score = -1.0
-    best_parts: list[np.ndarray] | None = None
-
-    for def_i in tried_idx:
-        for ptA, ptB in candidates_for_defect(def_i):
-            split_res = _split_mask_by_line(
-                component_mask,
-                float(ptA[0]),
-                float(ptA[1]),
-                float(ptB[0]),
-                float(ptB[1]),
-            )
-            if split_res is None:
-                continue
-            left, right = split_res
-
-            area_l = cv2.countNonZero(left)
-            area_r = cv2.countNonZero(right)
-            if area_l < min_area or area_r < min_area:
-                continue
-
-            balance = min(area_l, area_r) / max(area_l, area_r)
-            vert = _line_verticality(ptA, ptB)
-            score = w_bal * balance + w_vert * vert
-            if score > best_score:
-                best_score = score
-                best_parts = [left, right]
-
-    if best_parts is None:
-        return [component_mask]
-
-    out: list[np.ndarray] = []
-    for part in best_parts:
-        if len(out) >= max_walls:
-            break
-        out.append(part)
-        if len(out) < max_walls:
-            sub = _contour_split_component(part, min_area, max_walls - len(out))
-            if len(sub) > 1:
-                out.pop()
-                out.extend(sub[: max_walls - len(out)])
-
-    return out if out else [component_mask]
-
-
 def _order_rect_corners_tl_bl_br_tr(box_pts: np.ndarray) -> list[list[int]]:
     """Sort 4 points of minAreaRect into [TL, BL, BR, TR] order."""
     pts = box_pts.reshape(4, 2).astype(float)
@@ -599,8 +417,8 @@ def split_walls_from_mask(
     image_height: int,
 ) -> list[dict]:
     """
-    Split wall_minus_holes mask into separate wall dicts:
-    [{ id, corners: [[x,y]*4], center: [x,y] }, ...]
+    Finds components in the mask. We do NOT use aggressive splitting 
+    like inner corners or watersheds anymore. A wall is a wall.
     """
     mask_bin = (wall_minus_holes > 0).astype(np.uint8) * 255
 
@@ -619,25 +437,6 @@ def split_walls_from_mask(
             comp = np.zeros_like(mask_clean)
             comp[labels == i] = 255
             component_masks.append(comp)
-
-    if len(component_masks) == 1:
-        # 1) Сначала пробуем разбить L-образный фасад по внутренней вогнутости (угловой перелом).
-        inner = _inner_corner_split_component(component_masks[0], int(min_area), EXTERIOR_MAX_WALLS)
-        if len(inner) > 1:
-            component_masks = inner
-        else:
-            # 2) fallback: контурные углы
-            sub = _contour_split_component(component_masks[0], int(min_area), EXTERIOR_MAX_WALLS)
-            if len(sub) > 1:
-                component_masks = sub
-            else:
-                # 3) ultimate fallback: watershed
-                sub = _watershed_split(component_masks[0])
-                if len(sub) > 1:
-                    component_masks = sub
-
-    if not component_masks:
-        return []
 
     raw_walls: list[dict] = []
     for comp_mask in component_masks:
