@@ -3,21 +3,49 @@ import { Joyride, STATUS, EVENTS, LIFECYCLE } from 'react-joyride'
 import type { Step, EventData } from 'react-joyride'
 import { useVisualizerStore } from '@/store/useVisualizerStore'
 import { useUIStore } from '@/store/useUIStore'
+import { useWallStore } from '@/store/useWallStore'
 
 export function OnboardingTour() {
   const photoDataUrl = useVisualizerStore((s) => s.photoDataUrl)
   const tourActive = useUIStore((s) => s.tourActive)
   const setTourActive = useUIStore((s) => s.setTourActive)
   const setEditWallCorners = useUIStore((s) => s.setEditWallCorners)
+  const walls = useWallStore((s) => s.walls)
 
   useEffect(() => {
-    if (photoDataUrl && !localStorage.getItem('vizual_tour_completed')) {
-      const timer = setTimeout(() => {
+    if (!photoDataUrl || walls.length === 0) return
+    if (tourActive) return
+    if (localStorage.getItem('vizual_tour_completed')) return
+
+    const neededTargets = [
+      '.tour-canvas-container',
+      '.tour-walls-list',
+      '.tour-materials-panel',
+      '.tour-apply-texture',
+      '.tour-edit-mask',
+    ]
+
+    let raf = 0
+    let attempts = 0
+    const maxAttempts = 24 // ~400ms на ожидание DOM после restore/рендера
+
+    const checkTargets = () => {
+      const ready = neededTargets.every((sel) => document.querySelector(sel))
+      if (ready) {
         setTourActive(true)
-      }, 500)
-      return () => clearTimeout(timer)
+        return
+      }
+      attempts += 1
+      if (attempts < maxAttempts) {
+        raf = window.requestAnimationFrame(checkTargets)
+      }
     }
-  }, [photoDataUrl, setTourActive])
+
+    raf = window.requestAnimationFrame(checkTargets)
+    return () => {
+      if (raf) window.cancelAnimationFrame(raf)
+    }
+  }, [photoDataUrl, walls.length, tourActive, setTourActive])
 
   const handleJoyrideEvent = (data: EventData) => {
     const { status, index, lifecycle, type } = data
@@ -80,7 +108,7 @@ export function OnboardingTour() {
       run={tourActive}
       continuous
       scrollToFirstStep
-      onEvent={handleJoyrideEvent}
+      callback={handleJoyrideEvent}
       styles={{
         buttonPrimary: {
           backgroundColor: '#2563eb', // синий (blue-600)

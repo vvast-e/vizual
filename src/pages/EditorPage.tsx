@@ -8,21 +8,41 @@ import { WallsPanel } from '@/components/Layout/WallsPanel'
 import { OnboardingTour } from '@/components/OnboardingTour'
 import { useVisualizerStore } from '@/store/useVisualizerStore'
 import { useWallStore } from '@/store/useWallStore'
+import { useUIStore } from '@/store/useUIStore'
 import { loadState } from '@/lib/persist'
 
 export function EditorPage() {
   const navigate = useNavigate()
   const photoDataUrl = useVisualizerStore((s) => s.photoDataUrl)
+  const walls = useWallStore((s) => s.walls)
+  const wallImageSize = useWallStore((s) => s.wallImageSize)
+  const setHideWallMasks = useUIStore((s) => s.setHideWallMasks)
   const [isDrawingCustomMask, setIsDrawingCustomMask] = useState(false)
+  const [restoreChecked, setRestoreChecked] = useState(false)
 
   useEffect(() => {
-    if (!photoDataUrl) {
-      const restored = loadState()
-      if (!restored) {
-        navigate('/upload')
-      }
+    if (restoreChecked) return
+
+    const hasRuntimeData = Boolean(photoDataUrl) && walls.length > 0 && Boolean(wallImageSize)
+    if (hasRuntimeData) {
+      setHideWallMasks(false)
+      setRestoreChecked(true)
+      return
     }
-  }, [photoDataUrl, navigate])
+
+    const restored = loadState()
+    setRestoreChecked(true)
+    if (!restored && !photoDataUrl) {
+      navigate('/upload')
+    }
+  }, [photoDataUrl, walls.length, wallImageSize, restoreChecked, navigate, setHideWallMasks])
+
+  useEffect(() => {
+    if (!photoDataUrl) return
+    if (walls.length === 0) return
+    if (!wallImageSize) return
+    setHideWallMasks(false)
+  }, [photoDataUrl, walls.length, wallImageSize, setHideWallMasks])
 
   const handleStartCustomMask = useCallback(() => {
     setIsDrawingCustomMask(true)

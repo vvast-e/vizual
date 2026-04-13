@@ -124,9 +124,8 @@ export function WallsPanel({ onStartCustomMask, isDrawingCustomMask, onCancelCus
           <button
             type="button"
             onClick={onStartCustomMask}
-            disabled={walls.length === 0}
-            className="tour-add-mask flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-gray-300 px-3 py-2 text-xs text-gray-500 transition-colors hover:border-gray-400 hover:bg-gray-50 hover:text-gray-700 disabled:opacity-40"
-            title={walls.length === 0 ? 'Загрузите фото, чтобы добавить область' : 'Нарисовать область'}
+            className="tour-add-mask flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-gray-300 px-3 py-2 text-xs text-gray-500 transition-colors hover:border-gray-400 hover:bg-gray-50 hover:text-gray-700"
+            title="Нарисовать область"
           >
             <Plus className="h-3.5 w-3.5" />
             Нарисовать область

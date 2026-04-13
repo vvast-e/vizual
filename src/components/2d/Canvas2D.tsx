@@ -20,6 +20,7 @@ export function Canvas2D({
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const [canvasSize, setCanvasSize] = useState({ width: 800, height: 500 })
+  const [facadeMergeActive, setFacadeMergeActive] = useState(false)
   const photoDataUrl = useVisualizerStore((s) => s.photoDataUrl)
 
   const selectedMaterial = useMaterialStore((s) => s.selectedMaterial)
@@ -44,6 +45,8 @@ export function Canvas2D({
   const setExteriorSplitLineActive = useUIStore((s) => s.setExteriorSplitLineActive)
 
   const { selectedColor, colorizeOpacity, getColorizedTextureUrl } = useColorize()
+  const actionBtnBaseClass =
+    'inline-flex h-8 items-center justify-center rounded-md border px-3 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50'
 
   useEffect(() => {
     const el = containerRef.current
@@ -67,7 +70,6 @@ export function Canvas2D({
     setExteriorMaskOverlay,
     applyTexture,
     applyTextureToWall,
-    applyTextureToAllWalls,
     highlightSelectedWall,
     syncCornerHandles,
     clearFacadeSplitDraft,
@@ -91,10 +93,31 @@ export function Canvas2D({
   }, [photoDataUrl, isReady, loadPhotoFromDataUrl])
 
   useEffect(() => {
-    if (isReady && isPhotoLoaded && walls.length > 0 && wallImageSize) {
-      setWallOverlays(walls, wallImageSize)
+    if (!isReady || !photoDataUrl) return
+    if (!isPhotoLoaded) return
+
+    // При переходе /upload -> /editor возможна гонка первого кадра.
+    // Повторяем отрисовку оверлеев на следующих frame, чтобы гарантировать показ масок.
+    const draw = () => setWallOverlays(walls, wallImageSize)
+    draw()
+    const raf1 = window.requestAnimationFrame(draw)
+    const raf2 = window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(draw)
+    })
+    return () => {
+      window.cancelAnimationFrame(raf1)
+      window.cancelAnimationFrame(raf2)
     }
-  }, [isReady, isPhotoLoaded, walls, wallImageSize, wallTextures, hideWallMasks, wallVisibility, setWallOverlays])
+  }, [
+    isReady,
+    isPhotoLoaded,
+    photoDataUrl,
+    walls,
+    wallImageSize,
+    hideWallMasks,
+    wallVisibility,
+    setWallOverlays,
+  ])
 
   useEffect(() => {
     if (!isReady || !isPhotoLoaded) return
@@ -148,35 +171,60 @@ export function Canvas2D({
     if (!rawUrl) return
     try {
       const url = await getTextureUrl(rawUrl)
-      if (selectedWallId != null && walls.length > 0 && wallImageSize) {
-        const wall = walls.find((w) => w.id === selectedWallId)
-        if (wall && wall.corners.length >= 3) {
-          setWallTexture(selectedWallId, url)
-          try {
-            await applyTextureToWall(url, wall.corners, wallImageSize, selectedWallId)
-          } catch (e) {
-            setWallTexture(selectedWallId, null)
-            throw e
+      if (sceneMode === 'exterior' && walls.length > 0 && wallImageSize) {
+        if (facadeMergeActive) {
+          const profiledIds = walls
+            .map((w) => w.id)
+            .filter((id) => wallTextures[id] != null)
+          if (profiledIds.length === 0) {
+            console.warn('Режим объединения фасада активен, но нет областей с уже наложенным профилем')
+            return
+          }
+          for (const id of profiledIds) {
+            const wall = walls.find((w) => w.id === id)
+            if (!wall || wall.corners.length < 3) continue
+            setWallTexture(id, url)
+            try {
+              await applyTextureToWall(url, wall.corners, wallImageSize, id)
+            } catch (e) {
+              setWallTexture(id, null)
+              throw e
+            }
           }
           return
+        }
+        const fallbackId = selectedWallId ?? walls[0]?.id ?? null
+        if (fallbackId != null) {
+          const wall = walls.find((w) => w.id === fallbackId)
+          if (wall && wall.corners.length >= 3) {
+            setWallTexture(fallbackId, url)
+            try {
+              await applyTextureToWall(url, wall.corners, wallImageSize, fallbackId)
+            } catch (e) {
+              setWallTexture(fallbackId, null)
+              throw e
+            }
+            return
+          }
         }
       }
       await applyTexture(url, 'repeat')
     } catch (err) {
       console.error('Не удалось наложить текстуру:', rawUrl, err)
     }
-  }, [selectedMaterial?.texture.url, selectedWallId, walls, wallImageSize, applyTexture, applyTextureToWall, setWallTexture, getTextureUrl])
-
-  const handleApplyFacadeProfile = useCallback(async () => {
-    const rawUrl = selectedMaterial?.texture.url
-    if (!rawUrl || walls.length === 0 || sceneMode !== 'exterior') return
-    try {
-      const url = await getTextureUrl(rawUrl)
-      await applyTextureToAllWalls(url)
-    } catch (err) {
-      console.error('Не удалось применить профиль ко всем областям фасада:', rawUrl, err)
-    }
-  }, [selectedMaterial?.texture.url, walls.length, sceneMode, getTextureUrl, applyTextureToAllWalls])
+  }, [
+    selectedMaterial?.texture.url,
+    selectedWallId,
+    walls,
+    wallImageSize,
+    wallTextures,
+    sceneMode,
+    facadeMergeActive,
+    applyTexture,
+    applyTextureToWall,
+    setWallTexture,
+    getTextureUrl,
+  ])
 
   // Авто-применение при смене цвета (debounce 300ms)
   const colorKeyRef = useRef<string>('')
@@ -197,23 +245,30 @@ export function Canvas2D({
   }, [selectedColor?.hex, colorizeOpacity, isReady, selectedMaterial, hasTextureLayer, handleApplyTexture])
 
   return (
-    <div className={`flex flex-1 flex-col gap-2 overflow-hidden ${className}`}>
+    <div className={`flex flex-1 flex-col gap-1 overflow-hidden ${className}`}>
       {photoDataUrl && (
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="rounded-lg border border-gray-200 bg-white p-1.5">
+          <div className="flex flex-wrap items-center gap-1.5">
             <button
               type="button"
               onClick={handleApplyTexture}
               disabled={!selectedMaterial}
-              className="tour-apply-texture rounded-lg bg-gray-800 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-gray-700 disabled:opacity-50"
+              className={`tour-apply-texture ${actionBtnBaseClass} min-w-[156px] border-gray-900 bg-gray-900 text-white hover:bg-black`}
+              title="Применить выбранный профиль к активной области"
             >
               Применить профиль
             </button>
             {sceneMode === 'exterior' && (
               <button
                 type="button"
-                onClick={handleApplyFacadeProfile}
-                disabled={!selectedMaterial || walls.length === 0}
-                className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm transition-colors hover:bg-gray-50 disabled:opacity-50"
+                onClick={() => setFacadeMergeActive((v) => !v)}
+                disabled={walls.length === 0}
+                className={`${actionBtnBaseClass} min-w-[156px] ${
+                  facadeMergeActive
+                    ? 'border-blue-600 bg-blue-50 text-blue-800'
+                    : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+                }`}
+                title="Когда включено, профиль применяется сразу ко всем областям фасада"
               >
                 Объединить фасад
               </button>
@@ -221,9 +276,12 @@ export function Canvas2D({
             <button
               type="button"
               onClick={() => setEditWallCorners(!editWallCorners)}
-              className={`tour-edit-mask rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
-                editWallCorners ? 'border-blue-700 bg-blue-50 text-blue-800' : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+              className={`tour-edit-mask ${actionBtnBaseClass} min-w-[140px] ${
+                editWallCorners
+                  ? 'border-blue-600 bg-blue-50 text-blue-800'
+                  : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
               }`}
+              title="Включить ручную правку формы и перспективы выбранной области"
             >
               Править область
             </button>
@@ -238,73 +296,85 @@ export function Canvas2D({
                     setExteriorSplitLineActive(true)
                   }
                 }}
-                className={`rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
+                className={`${actionBtnBaseClass} min-w-[140px] ${
                   exteriorSplitLineActive
-                    ? 'border-orange-600 bg-orange-50 text-orange-900'
-                    : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+                    ? 'border-blue-600 bg-blue-50 text-blue-800'
+                    : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
                 }`}
+                title="Разрезать фасад по линии двумя кликами на фото"
               >
-                {exteriorSplitLineActive ? 'Отменить разрез' : 'Разрез по линии'}
+                Разрез по линии
               </button>
-            )}
-            {editWallCorners && sceneMode === 'exterior' && (
-              <div className="flex items-center rounded-lg border border-blue-200 bg-blue-50 p-0.5">
-                <button
-                  type="button"
-                  onClick={() => setEditCornersMode('polygon')}
-                  className={`rounded-md px-2 py-1 text-xs font-medium transition-colors ${
-                    editCornersMode === 'polygon'
-                      ? 'bg-blue-600 text-white'
-                      : 'text-blue-800 hover:bg-blue-100'
-                  }`}
-                >
-                  Форма
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setEditCornersMode('perspective')}
-                  className={`rounded-md px-2 py-1 text-xs font-medium transition-colors ${
-                    editCornersMode === 'perspective'
-                      ? 'bg-blue-600 text-white'
-                      : 'text-blue-800 hover:bg-blue-100'
-                  }`}
-                >
-                  Перспектива
-                </button>
-              </div>
             )}
             <button
               type="button"
               aria-pressed={hideWallMasks}
               onClick={() => setHideWallMasks(!hideWallMasks)}
-              className={`rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
-                hideWallMasks ? 'border-blue-700 bg-blue-50 text-blue-800' : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+              className={`${actionBtnBaseClass} min-w-[140px] ${
+                hideWallMasks
+                  ? 'border-blue-600 bg-blue-50 text-blue-800'
+                  : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
               }`}
+              title="Показать или скрыть контуры областей на фото"
             >
               Скрыть области
             </button>
-            {hasTextureLayer && (
-              <div className="flex items-center gap-2">
-                <label className="text-sm text-gray-600" htmlFor="texture-scale">
-                  Масштаб:
-                </label>
-                <input
-                  id="texture-scale"
-                  type="range"
-                  min={5}
-                  max={100}
-                  value={Math.round(textureScale * 100)}
-                  onChange={(e) => setTextureScale(Number(e.target.value) / 100, selectedWallId)}
-                  className="h-2 w-28 cursor-pointer accent-gray-800"
-                  aria-label="Масштаб текстуры"
-                />
-                <span className="text-xs text-gray-500 tabular-nums">
-                  {Math.round(textureScale * 100)}%
-                </span>
-              </div>
-            )}
-
           </div>
+
+          <div className="mt-1.5 flex min-h-8 flex-wrap items-center gap-1.5 rounded-md bg-gray-50 px-1.5 py-1">
+            <span className="text-xs font-medium uppercase tracking-wide text-gray-500">Режимы</span>
+            <div className="flex items-center rounded-md border border-gray-200 bg-white p-0.5">
+              <button
+                type="button"
+                onClick={() => setEditCornersMode('polygon')}
+                disabled={!editWallCorners || sceneMode !== 'exterior'}
+                className={`rounded px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-50 ${
+                  editCornersMode === 'polygon'
+                    ? 'bg-blue-600 text-white'
+                    : 'text-gray-700 hover:bg-gray-100'
+                }`}
+                title="Точная правка контура области по точкам"
+              >
+                Форма
+              </button>
+              <button
+                type="button"
+                onClick={() => setEditCornersMode('perspective')}
+                disabled={!editWallCorners || sceneMode !== 'exterior'}
+                className={`rounded px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-50 ${
+                  editCornersMode === 'perspective'
+                    ? 'bg-blue-600 text-white'
+                    : 'text-gray-700 hover:bg-gray-100'
+                }`}
+                title="Правка перспективы четырьмя углами"
+              >
+                Перспектива
+              </button>
+            </div>
+            <div
+              className="ml-auto flex items-center gap-2 rounded-md border border-gray-200 bg-white px-2 py-1"
+              title="Масштаб отображения текстуры на выбранной области"
+            >
+              <label className="text-xs font-medium text-gray-600" htmlFor="texture-scale">
+                Масштаб
+              </label>
+              <input
+                id="texture-scale"
+                type="range"
+                min={5}
+                max={100}
+                value={Math.round(textureScale * 100)}
+                onChange={(e) => setTextureScale(Number(e.target.value) / 100, selectedWallId)}
+                disabled={!hasTextureLayer}
+                className="h-2 w-24 cursor-pointer accent-gray-800 disabled:opacity-40"
+                aria-label="Масштаб текстуры"
+              />
+              <span className="w-10 text-right text-xs text-gray-500 tabular-nums">
+                {Math.round(textureScale * 100)}%
+              </span>
+            </div>
+          </div>
+        </div>
       )}
       <div
         ref={containerRef}

@@ -37,10 +37,23 @@ export function saveState() {
 export function loadState(): boolean {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return false
+    if (!raw) {
+      return false
+    }
 
     const state: PersistedState = JSON.parse(raw)
     if (!state.photoDataUrl) return false
+    // Защита от "битого" restore: фото есть, а стен/размера нет — в редакторе не появятся ни маски, ни тур.
+    const hasRenderableWalls =
+      Array.isArray(state.walls) &&
+      state.walls.length > 0 &&
+      !!state.wallImageSize &&
+      Number(state.wallImageSize.width) > 0 &&
+      Number(state.wallImageSize.height) > 0
+    if (!hasRenderableWalls) {
+      localStorage.removeItem(STORAGE_KEY)
+      return false
+    }
 
     useVisualizerStore.getState().setPhotoDataUrl(state.photoDataUrl)
     useUIStore.getState().setSceneMode(state.sceneMode ?? 'interior')

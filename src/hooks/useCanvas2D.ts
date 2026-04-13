@@ -667,7 +667,7 @@ export function useCanvas2D({
         flipY: bgTx.flipY,
         selectable: false,
         evented: false,
-        opacity: 0.35,
+        opacity: 0,
       })
       ;(img as unknown as { set: (o: Record<string, unknown>) => void }).set({
         data: { [EXTERIOR_MASK_DATA_KEY]: true },
@@ -689,7 +689,19 @@ export function useCanvas2D({
       wallDebugShapesRef.current = []
       wallOverlaysRef.current.forEach((obj) => canvas.remove(obj))
       wallOverlaysRef.current = []
+      const keepIds = new Set(walls.map((w) => String(w.id)))
+      for (const [layerKey, layerObj] of Object.entries(textureLayersRef.current)) {
+        if (layerKey === 'background' || keepIds.has(layerKey)) continue
+        canvas.remove(layerObj)
+        delete textureLayersRef.current[layerKey]
+      }
       if (walls.length === 0 || !wallImageSize) {
+        for (const [layerKey, layerObj] of Object.entries(textureLayersRef.current)) {
+          if (layerKey === 'background') continue
+          canvas.remove(layerObj)
+          delete textureLayersRef.current[layerKey]
+        }
+        setHasTextureLayer(Boolean(textureLayersRef.current.background))
         canvas.requestRenderAll()
         return
       }
@@ -714,7 +726,7 @@ export function useCanvas2D({
               })
               .join(' ') + ' Z'
           const shape = new Path(d, {
-            fill: 'rgba(59,130,246,0.12)',
+            fill: 'transparent',
             stroke: 'rgba(37,99,235,0.8)',
             strokeWidth: 2,
             selectable: false,
@@ -903,29 +915,6 @@ export function useCanvas2D({
       canvas.requestRenderAll()
     },
     [containerWidth, containerHeight, textureScale, getBackgroundTransform]
-  )
-
-  const applyTextureToAllWalls = useCallback(
-    async (textureUrl: string) => {
-      const { walls, wallImageSize, setWallTexture } = useWallStore.getState()
-      if (!wallImageSize || walls.length === 0) return
-
-      const failed: number[] = []
-      for (const wall of walls) {
-        if (!wall.corners || wall.corners.length < 3) continue
-        setWallTexture(wall.id, textureUrl)
-        try {
-          await applyTextureToWall(textureUrl, wall.corners, wallImageSize, wall.id)
-        } catch {
-          setWallTexture(wall.id, null)
-          failed.push(wall.id)
-        }
-      }
-      if (failed.length > 0) {
-        throw new Error(`Не удалось применить профиль к областям: ${failed.join(', ')}`)
-      }
-    },
-    [applyTextureToWall]
   )
 
   const highlightSelectedWall = useCallback((selectedId: number | null) => {
@@ -1144,7 +1133,6 @@ export function useCanvas2D({
     setExteriorMaskOverlay,
     applyTexture,
     applyTextureToWall,
-    applyTextureToAllWalls,
     highlightSelectedWall,
     syncCornerHandles,
     finishLasso,

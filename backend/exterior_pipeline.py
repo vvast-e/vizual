@@ -30,30 +30,6 @@ BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.abspath(os.path.join(BACKEND_DIR, ".."))
 EXTERIOR_DEBUG_DIR = os.path.join(PROJECT_ROOT, "exterior-debug")
 
-# Optional: gradient+k-means plane hints vs geometry split (see exterior_depth_planes.py)
-EXTERIOR_PLANE_DEPTH_ENABLE = os.getenv("EXTERIOR_PLANE_DEPTH_ENABLE", "0") in {
-    "1",
-    "true",
-    "TRUE",
-    "yes",
-    "YES",
-}
-EXTERIOR_ARBITER_DEPTH_MARGIN = float(os.getenv("EXTERIOR_ARBITER_DEPTH_MARGIN", "0.08"))
-# На сколько «стен» больше у геометрии, чем у depth, чтобы принудительно взять depth (при достаточном score_depth)
-EXTERIOR_ARBITER_FRAGMENT_GAP = int(os.getenv("EXTERIOR_ARBITER_FRAGMENT_GAP", "2"))
-# Если геометрия/шов дали мало стен, а k-means по глубине — заметно больше (типично 2 vs 4)
-EXTERIOR_ARBITER_UNDERSEG_GAP = int(os.getenv("EXTERIOR_ARBITER_UNDERSEG_GAP", "2"))
-EXTERIOR_ARBITER_UNDERSEG_MIN_SCORE = float(os.getenv("EXTERIOR_ARBITER_UNDERSEG_MIN_SCORE", "0.52"))
-# Сравнение с depth при 1–2 гео-стенах даже без EXTERIOR_PLANE_DEPTH_ENABLE (дороже по CPU)
-EXTERIOR_PLANE_COMPARE_FEW_WALLS = os.getenv("EXTERIOR_PLANE_COMPARE_FEW_WALLS", "1") in {
-    "1",
-    "true",
-    "TRUE",
-    "yes",
-    "YES",
-}
-
-
 def _bbox_area(b: list[float]) -> float:
     return max(0.0, b[2] - b[0]) * max(0.0, b[3] - b[1])
 
@@ -181,7 +157,7 @@ def encode_mask_png_base64(mask: np.ndarray) -> str:
     return base64.b64encode(buf.tobytes()).decode("ascii")
 
 
-EXTERIOR_MIN_WALL_AREA_RATIO = 0.008
+EXTERIOR_MIN_WALL_AREA_RATIO = 0.004
 EXTERIOR_MAX_WALLS = 6
 EXTERIOR_WATERSHED_DIST_RATIO = 0.35
 EXTERIOR_CONTOUR_EPS_RATIO = 0.012
@@ -209,9 +185,22 @@ EXTERIOR_MIN_SPLIT_RATIO = 0.12
 # При разрезе L-образного фасада: линия между двумя плоскостями в фото обычно близка к вертикали.
 EXTERIOR_PREFER_VERTICAL_SPLIT = float(os.getenv("EXTERIOR_PREFER_VERTICAL_SPLIT", "0.78"))
 EXTERIOR_SEAM_ENABLE = os.getenv("EXTERIOR_SEAM_ENABLE", "1") in {"1", "true", "TRUE", "yes", "YES"}
+EXTERIOR_SEAM_HOUGH_ENABLE = os.getenv("EXTERIOR_SEAM_HOUGH_ENABLE", "1") in {
+    "1",
+    "true",
+    "TRUE",
+    "yes",
+    "YES",
+}
 EXTERIOR_SEAM_ANGLE_THR_DEG = float(os.getenv("EXTERIOR_SEAM_ANGLE_THR_DEG", "12"))
 EXTERIOR_SEAM_MIN_LINE_RATIO = float(os.getenv("EXTERIOR_SEAM_MIN_LINE_RATIO", "0.40"))
 EXTERIOR_SEAM_CENTER_MARGIN_RATIO = float(os.getenv("EXTERIOR_SEAM_CENTER_MARGIN_RATIO", "0.10"))
+EXTERIOR_SEAM_CONTOUR_CENTER_MARGIN_RATIO = float(
+    os.getenv("EXTERIOR_SEAM_CONTOUR_CENTER_MARGIN_RATIO", "0.02")
+)
+EXTERIOR_SEAM_CONTOUR_EDGE_EXCLUDE_RATIO = float(
+    os.getenv("EXTERIOR_SEAM_CONTOUR_EDGE_EXCLUDE_RATIO", "0.05")
+)
 EXTERIOR_SEAM_W_BALANCE = float(os.getenv("EXTERIOR_SEAM_W_BALANCE", "0.45"))
 EXTERIOR_SEAM_W_EDGE = float(os.getenv("EXTERIOR_SEAM_W_EDGE", "0.40"))
 EXTERIOR_SEAM_W_CENTER = float(os.getenv("EXTERIOR_SEAM_W_CENTER", "0.15"))
@@ -227,12 +216,45 @@ EXTERIOR_SEAM_CONTOUR_ENABLE = os.getenv("EXTERIOR_SEAM_CONTOUR_ENABLE", "1") in
 }
 EXTERIOR_SEAM_CONTOUR_TOP_Y_MAX = float(os.getenv("EXTERIOR_SEAM_CONTOUR_TOP_Y_MAX", "0.42"))
 EXTERIOR_SEAM_CONTOUR_BOTTOM_Y_MIN = float(os.getenv("EXTERIOR_SEAM_CONTOUR_BOTTOM_Y_MIN", "0.58"))
-EXTERIOR_SEAM_CONTOUR_MIN_DELTA_DEG = float(os.getenv("EXTERIOR_SEAM_CONTOUR_MIN_DELTA_DEG", "24.0"))
+EXTERIOR_SEAM_CONTOUR_MIN_DELTA_DEG = float(os.getenv("EXTERIOR_SEAM_CONTOUR_MIN_DELTA_DEG", "40.0"))
 EXTERIOR_SEAM_CONTOUR_MIN_EDGE_RATIO = float(os.getenv("EXTERIOR_SEAM_CONTOUR_MIN_EDGE_RATIO", "0.08"))
 EXTERIOR_SEAM_CONTOUR_MAX_K = int(os.getenv("EXTERIOR_SEAM_CONTOUR_MAX_K", "6"))
-EXTERIOR_SEAM_CONTOUR_BONUS_BOTTOM = float(os.getenv("EXTERIOR_SEAM_CONTOUR_BONUS_BOTTOM", "0.14"))
-EXTERIOR_SEAM_CONTOUR_BONUS_TOP = float(os.getenv("EXTERIOR_SEAM_CONTOUR_BONUS_TOP", "0.06"))
+EXTERIOR_SEAM_CONTOUR_BONUS_BOTTOM = float(os.getenv("EXTERIOR_SEAM_CONTOUR_BONUS_BOTTOM", "0.28"))
+EXTERIOR_SEAM_CONTOUR_BONUS_TOP = float(os.getenv("EXTERIOR_SEAM_CONTOUR_BONUS_TOP", "0.10"))
 EXTERIOR_SEAM_CONTOUR_X_TOL_RATIO = float(os.getenv("EXTERIOR_SEAM_CONTOUR_X_TOL_RATIO", "0.03"))
+EXTERIOR_SEAM_PROFILE_ENABLE = os.getenv("EXTERIOR_SEAM_PROFILE_ENABLE", "1") in {
+    "1",
+    "true",
+    "TRUE",
+    "yes",
+    "YES",
+}
+EXTERIOR_SEAM_PROFILE_MEDIAN_K = int(os.getenv("EXTERIOR_SEAM_PROFILE_MEDIAN_K", "9"))
+EXTERIOR_SEAM_PROFILE_WINDOW = int(os.getenv("EXTERIOR_SEAM_PROFILE_WINDOW", "12"))
+EXTERIOR_SEAM_PROFILE_PROMINENCE_PX = float(os.getenv("EXTERIOR_SEAM_PROFILE_PROMINENCE_PX", "6.0"))
+EXTERIOR_SEAM_PROFILE_MIN_SEG_LEN_PX = int(os.getenv("EXTERIOR_SEAM_PROFILE_MIN_SEG_LEN_PX", "10"))
+EXTERIOR_SEAM_PROFILE_NMS_X_GAP_RATIO = float(os.getenv("EXTERIOR_SEAM_PROFILE_NMS_X_GAP_RATIO", "0.02"))
+EXTERIOR_SEAM_PROFILE_MIN_SCALE_HITS = int(os.getenv("EXTERIOR_SEAM_PROFILE_MIN_SCALE_HITS", "2"))
+EXTERIOR_SEAM_PROFILE_RDP_EPS_PX = float(os.getenv("EXTERIOR_SEAM_PROFILE_RDP_EPS_PX", "7.0"))
+EXTERIOR_SEAM_PROFILE_QUALITY_MIN = float(os.getenv("EXTERIOR_SEAM_PROFILE_QUALITY_MIN", "0.45"))
+EXTERIOR_SEAM_PROFILE_QUALITY_HIGH = float(os.getenv("EXTERIOR_SEAM_PROFILE_QUALITY_HIGH", "0.65"))
+EXTERIOR_SEAM_PROFILE_STABILITY_WIN = int(os.getenv("EXTERIOR_SEAM_PROFILE_STABILITY_WIN", "18"))
+EXTERIOR_SEAM_PROFILE_SLOPE_EPS_PX = float(os.getenv("EXTERIOR_SEAM_PROFILE_SLOPE_EPS_PX", "0.8"))
+EXTERIOR_SEAM_PROFILE_SIGN_FLIPS_REF = float(os.getenv("EXTERIOR_SEAM_PROFILE_SIGN_FLIPS_REF", "4.0"))
+EXTERIOR_SEAM_PROFILE_SEG_REF_PX = float(os.getenv("EXTERIOR_SEAM_PROFILE_SEG_REF_PX", "36.0"))
+EXTERIOR_SEAM_PROFILE_PROM_REF_PX = float(os.getenv("EXTERIOR_SEAM_PROFILE_PROM_REF_PX", "14.0"))
+EXTERIOR_SEAM_PROFILE_CLUSTER_GAP_RATIO = float(os.getenv("EXTERIOR_SEAM_PROFILE_CLUSTER_GAP_RATIO", "0.035"))
+EXTERIOR_SEAM_PROFILE_CLUSTER_GAP_MIN_PX = float(os.getenv("EXTERIOR_SEAM_PROFILE_CLUSTER_GAP_MIN_PX", "16.0"))
+EXTERIOR_SEAM_PROFILE_TANDEM_MIN_NEIGHBOR_GAP_RATIO = float(
+    os.getenv("EXTERIOR_SEAM_PROFILE_TANDEM_MIN_NEIGHBOR_GAP_RATIO", "0.045")
+)
+EXTERIOR_DEBUG_KINK_LABEL_TOP_K = int(os.getenv("EXTERIOR_DEBUG_KINK_LABEL_TOP_K", "30"))
+EXTERIOR_DEBUG_KINK_LABEL_MIN_GAP_PX = int(os.getenv("EXTERIOR_DEBUG_KINK_LABEL_MIN_GAP_PX", "14"))
+EXTERIOR_SEAM_TANDEM_X_TOL_RATIO = float(os.getenv("EXTERIOR_SEAM_TANDEM_X_TOL_RATIO", "0.04"))
+EXTERIOR_SEAM_TANDEM_BOOST = float(os.getenv("EXTERIOR_SEAM_TANDEM_BOOST", "0.12"))
+EXTERIOR_SEAM_BOTTOM_CONF_MIN = float(os.getenv("EXTERIOR_SEAM_BOTTOM_CONF_MIN", "0.42"))
+EXTERIOR_SEAM_TOP_FALLBACK_CONF_MIN = float(os.getenv("EXTERIOR_SEAM_TOP_FALLBACK_CONF_MIN", "0.46"))
+EXTERIOR_SEAM_CORNER_SNAP_TOL_RATIO = float(os.getenv("EXTERIOR_SEAM_CORNER_SNAP_TOL_RATIO", "0.02"))
 EXTERIOR_SEAM_SECOND_PASS = os.getenv("EXTERIOR_SEAM_SECOND_PASS", "1") in {
     "1",
     "true",
@@ -240,17 +262,6 @@ EXTERIOR_SEAM_SECOND_PASS = os.getenv("EXTERIOR_SEAM_SECOND_PASS", "1") in {
     "yes",
     "YES",
 }
-# Если геометрия дала слишком много «стен», один раз посчитать k-means плоскости (как у арбитра) и сравнить
-EXTERIOR_FRAGMENT_RESCUE = os.getenv("EXTERIOR_FRAGMENT_RESCUE", "1") in {
-    "1",
-    "true",
-    "TRUE",
-    "yes",
-    "YES",
-}
-EXTERIOR_ARBITER_MIN_DEPTH_SCORE = float(os.getenv("EXTERIOR_ARBITER_MIN_DEPTH_SCORE", "0.42"))
-
-
 def _line_verticality(pt_a: np.ndarray, pt_b: np.ndarray) -> float:
     """1.0 — почти вертикальная линия, 0.0 — почти горизонтальная."""
     dx = float(pt_b[0] - pt_a[0])
@@ -259,6 +270,320 @@ def _line_verticality(pt_a: np.ndarray, pt_b: np.ndarray) -> float:
     if n < 1e-6:
         return 0.0
     return abs(dy) / n
+
+
+def _interior_x_bounds(mask_bin: np.ndarray, width: int) -> tuple[float, float]:
+    """
+    Возвращает допустимый внутренний диапазон X:
+    от левой/правой границы маски отступаем margin, чтобы не брать края дома как изломы.
+    """
+    ys, xs = np.where(mask_bin > 0)
+    if xs.size == 0:
+        return 0.0, float(max(0, width - 1))
+    x_min = float(xs.min())
+    x_max = float(xs.max())
+    span = max(1.0, x_max - x_min)
+    margin = max(6.0, EXTERIOR_SEAM_CONTOUR_EDGE_EXCLUDE_RATIO * span)
+    left = x_min + margin
+    right = x_max - margin
+    if right <= left:
+        # На очень узких масках ослабляем фильтр, чтобы не выкинуть все кандидаты.
+        left = x_min + 2.0
+        right = x_max - 2.0
+    return left, right
+
+
+def _median_filter_1d(vals: np.ndarray, k: int) -> np.ndarray:
+    if vals.size == 0:
+        return vals
+    kk = max(1, int(k))
+    if kk % 2 == 0:
+        kk += 1
+    if kk <= 1:
+        return vals.astype(np.float64, copy=True)
+    pad = kk // 2
+    x = vals.astype(np.float64, copy=False)
+    xp = np.pad(x, (pad, pad), mode="edge")
+    out = np.empty_like(x)
+    for i in range(x.size):
+        out[i] = float(np.median(xp[i : i + kk]))
+    return out
+
+
+def _profile_kink_candidates(
+    mask_bin: np.ndarray,
+    bw: int,
+    bh: int,
+    zone: str,
+    x_left_interior: float,
+    x_right_interior: float,
+) -> list[dict]:
+    cands, _ = _profile_kink_candidates_with_debug(
+        mask_bin, bw, bh, zone, x_left_interior, x_right_interior
+    )
+    return cands
+
+
+def _profile_kink_candidates_with_debug(
+    mask_bin: np.ndarray,
+    bw: int,
+    bh: int,
+    zone: str,
+    x_left_interior: float,
+    x_right_interior: float,
+) -> tuple[list[dict], dict]:
+    if zone not in {"bottom", "top"}:
+        return [], {"zone": zone}
+    ys = np.full((bw,), np.nan, dtype=np.float64)
+    for x in range(bw):
+        idx = np.where(mask_bin[:, x] > 0)[0]
+        if idx.size == 0:
+            continue
+        ys[x] = float(idx[-1] if zone == "bottom" else idx[0])
+
+    valid = np.where(np.isfinite(ys))[0]
+    if valid.size < 24:
+        return [], {"zone": zone, "valid_count": int(valid.size)}
+
+    # Интерполируем пропуски по X, затем сглаживаем профиль.
+    x_all = np.arange(bw, dtype=np.float64)
+    ys_i = ys.copy()
+    ys_i[~np.isfinite(ys_i)] = np.interp(x_all[~np.isfinite(ys_i)], x_all[valid], ys[valid])
+    ys_s = _median_filter_1d(ys_i, EXTERIOR_SEAM_PROFILE_MEDIAN_K)
+
+    # Кусочно-линейное выравнивание профиля перед поиском изломов.
+    pts = np.stack([x_all, ys_s], axis=1).astype(np.float32).reshape(-1, 1, 2)
+    approx = cv2.approxPolyDP(pts, EXTERIOR_SEAM_PROFILE_RDP_EPS_PX, False)
+    piece = approx.reshape(-1, 2).astype(np.float64)
+    if piece.shape[0] < 3:
+        return [], {
+            "zone": zone,
+            "raw_profile": np.stack([x_all, ys], axis=1).tolist(),
+            "smoothed_profile": np.stack([x_all, ys_s], axis=1).tolist(),
+            "piecewise_profile": piece.tolist(),
+            "kinks": [],
+        }
+
+    base_bonus = EXTERIOR_SEAM_CONTOUR_BONUS_BOTTOM if zone == "bottom" else EXTERIOR_SEAM_CONTOUR_BONUS_TOP
+    cands_raw: list[dict] = []
+
+    def _sign_flips_near(xf: float) -> int:
+        xi = int(round(xf))
+        r = max(6, int(EXTERIOR_SEAM_PROFILE_STABILITY_WIN))
+        lo = max(0, xi - r)
+        hi = min(bw - 1, xi + r)
+        if hi - lo < 4:
+            return 0
+        seg = ys_s[lo : hi + 1]
+        d = np.diff(seg)
+        if d.size < 3:
+            return 0
+        eps = float(max(0.1, EXTERIOR_SEAM_PROFILE_SLOPE_EPS_PX))
+        d = d[np.abs(d) >= eps]
+        if d.size < 3:
+            return 0
+        s = np.sign(d)
+        return int(np.count_nonzero(s[1:] * s[:-1] < 0))
+
+    for i in range(1, piece.shape[0] - 1):
+        p_prev = piece[i - 1]
+        p = piece[i]
+        p_next = piece[i + 1]
+        x = float(p[0])
+        y = float(p[1])
+        if x <= x_left_interior or x >= x_right_interior:
+            continue
+        v1 = p - p_prev
+        v2 = p_next - p
+        n1 = float(np.linalg.norm(v1))
+        n2 = float(np.linalg.norm(v2))
+        if n1 < float(EXTERIOR_SEAM_PROFILE_MIN_SEG_LEN_PX) or n2 < float(EXTERIOR_SEAM_PROFILE_MIN_SEG_LEN_PX):
+            continue
+        cos_a = float(np.clip(np.dot(v1, v2) / (n1 * n2), -1.0, 1.0))
+        angle = float(np.degrees(np.arccos(cos_a)))
+        delta = 180.0 - angle
+        if delta < EXTERIOR_SEAM_CONTOUR_MIN_DELTA_DEG:
+            continue
+        y_norm = y / max(1.0, float(bh - 1))
+        if zone == "bottom":
+            if y_norm < EXTERIOR_SEAM_CONTOUR_BOTTOM_Y_MIN:
+                continue
+        else:
+            if y_norm > EXTERIOR_SEAM_CONTOUR_TOP_Y_MAX:
+                continue
+
+        # Prominence: расстояние до хорды между соседними вершинами.
+        chord = p_next - p_prev
+        chord_n = float(np.linalg.norm(chord))
+        if chord_n < 1e-6:
+            continue
+        prom = float(abs(np.cross(chord, p - p_prev)) / chord_n)
+        if prom < EXTERIOR_SEAM_PROFILE_PROMINENCE_PX:
+            continue
+
+        delta_norm = float(np.clip(delta / 90.0, 0.0, 1.0))
+        score_hint = base_bonus * (0.65 + 0.35 * delta_norm)
+        cands_raw.append(
+            {
+                "mid_x_local": x,
+                "y_local": y,
+                "pt_a_local": np.array([x, 0.0], dtype=np.float64),
+                "pt_b_local": np.array([x, float(bh - 1)], dtype=np.float64),
+                "source_bonus": float(score_hint),
+                "delta_norm": float(delta_norm),
+                "source": f"profile_{zone}",
+                "delta_deg": float(delta),
+                "prominence_px": float(prom),
+                "left_seg_len": float(n1),
+                "right_seg_len": float(n2),
+                "sign_flips": _sign_flips_near(x),
+            }
+        )
+
+    cands_precluster: list[dict] = []
+    if cands_raw:
+        prom_min = max(1e-6, EXTERIOR_SEAM_PROFILE_PROMINENCE_PX)
+        prom_ref = max(prom_min + 1e-6, EXTERIOR_SEAM_PROFILE_PROM_REF_PX)
+        seg_ref = max(float(EXTERIOR_SEAM_PROFILE_MIN_SEG_LEN_PX), EXTERIOR_SEAM_PROFILE_SEG_REF_PX)
+        ang_min = float(EXTERIOR_SEAM_CONTOUR_MIN_DELTA_DEG)
+        ang_ref = max(ang_min + 1.0, 82.0)
+        flips_ref = max(1.0, EXTERIOR_SEAM_PROFILE_SIGN_FLIPS_REF)
+
+        for rec in cands_raw:
+            prom = float(rec.get("prominence_px", 0.0))
+            delta = float(rec.get("delta_deg", 0.0))
+            seg_min = min(float(rec.get("left_seg_len", 0.0)), float(rec.get("right_seg_len", 0.0)))
+            flips = float(rec.get("sign_flips", 0.0))
+
+            p_score = float(np.clip((prom - prom_min) / max(1e-6, (prom_ref - prom_min)), 0.0, 1.0))
+            a_score = float(np.clip((delta - ang_min) / max(1e-6, (ang_ref - ang_min)), 0.0, 1.0))
+            l_score = float(np.clip(seg_min / max(1e-6, seg_ref), 0.0, 1.0))
+            s_score = float(np.clip(1.0 - (flips / flips_ref), 0.0, 1.0))
+            q = 0.35 * p_score + 0.25 * a_score + 0.20 * l_score + 0.20 * s_score
+            if q < EXTERIOR_SEAM_PROFILE_QUALITY_MIN:
+                continue
+
+            tier = "high" if q >= EXTERIOR_SEAM_PROFILE_QUALITY_HIGH else "medium"
+            rec["quality_score"] = float(q)
+            rec["quality_tier"] = tier
+            rec["source_bonus"] = float(rec.get("source_bonus", 0.0)) * (0.85 + 0.30 * q)
+            cands_precluster.append(rec)
+
+    # Сливаем близкие профильные точки в один структурный излом (не лимит, а кластеризация по X).
+    cands: list[dict] = []
+    if cands_precluster:
+        gap_px = max(EXTERIOR_SEAM_PROFILE_CLUSTER_GAP_MIN_PX, EXTERIOR_SEAM_PROFILE_CLUSTER_GAP_RATIO * float(bw))
+        by_x = sorted(cands_precluster, key=lambda r: float(r.get("mid_x_local", 0.0)))
+        clusters: list[list[dict]] = []
+        cur: list[dict] = [by_x[0]]
+        for rec in by_x[1:]:
+            x_cur = float(rec.get("mid_x_local", 0.0))
+            x_prev = float(cur[-1].get("mid_x_local", 0.0))
+            if abs(x_cur - x_prev) <= gap_px:
+                cur.append(rec)
+            else:
+                clusters.append(cur)
+                cur = [rec]
+        clusters.append(cur)
+
+        for grp in clusters:
+            grp_sorted = sorted(
+                grp,
+                key=lambda r: (
+                    float(r.get("quality_score", 0.0)),
+                    float(r.get("prominence_px", 0.0)),
+                    min(float(r.get("left_seg_len", 0.0)), float(r.get("right_seg_len", 0.0))),
+                ),
+                reverse=True,
+            )
+            best = dict(grp_sorted[0])
+            xs = [float(r.get("mid_x_local", 0.0)) for r in grp]
+            best["cluster_size"] = int(len(grp))
+            best["cluster_span_px"] = float(max(xs) - min(xs)) if xs else 0.0
+            cands.append(best)
+
+    dbg = {
+        "zone": zone,
+        "raw_profile": np.stack([x_all, ys], axis=1).tolist(),
+        "smoothed_profile": np.stack([x_all, ys_s], axis=1).tolist(),
+        "piecewise_profile": piece.tolist(),
+        "kinks": [
+            {
+                "x": round(float(c["mid_x_local"]), 2),
+                "y": round(float(c["y_local"]), 2),
+                "delta_deg": round(float(c.get("delta_deg", 0.0)), 2),
+                "prominence_px": round(float(c.get("prominence_px", 0.0)), 2),
+                "left_seg_len": round(float(c.get("left_seg_len", 0.0)), 2),
+                "right_seg_len": round(float(c.get("right_seg_len", 0.0)), 2),
+                "sign_flips": int(c.get("sign_flips", 0)),
+                "quality_score": round(float(c.get("quality_score", 0.0)), 3),
+                "quality_tier": str(c.get("quality_tier", "")),
+                "cluster_size": int(c.get("cluster_size", 1)),
+                "cluster_span_px": round(float(c.get("cluster_span_px", 0.0)), 2),
+            }
+            for c in cands
+        ],
+    }
+    return cands, dbg
+
+
+def _collect_corner_anchor_xs(mask_bin: np.ndarray, bw: int, bh: int) -> list[float]:
+    contours, _ = cv2.findContours(mask_bin, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return []
+    contour = max(contours, key=cv2.contourArea)
+    per = cv2.arcLength(contour, True)
+    if per < 20.0:
+        return []
+    x_left_interior, x_right_interior = _interior_x_bounds(mask_bin, bw)
+    min_edge = max(6.0, EXTERIOR_SEAM_CONTOUR_MIN_EDGE_RATIO * float(min(bw, bh)))
+    xs: list[float] = []
+    for frac in EXTERIOR_CONTOUR_EPS_FRACS:
+        f = float(frac)
+        if not (0.005 <= f <= 0.04):
+            continue
+        approx = cv2.approxPolyDP(contour, f * per, True)
+        pts = approx.reshape(-1, 2).astype(np.float64)
+        n = len(pts)
+        if n < 5:
+            continue
+        for i in range(n):
+            p_prev = pts[(i - 1) % n]
+            p = pts[i]
+            p_next = pts[(i + 1) % n]
+            v1 = p_prev - p
+            v2 = p_next - p
+            n1 = float(np.linalg.norm(v1))
+            n2 = float(np.linalg.norm(v2))
+            if n1 < min_edge or n2 < min_edge:
+                continue
+            cos_a = float(np.clip(np.dot(v1, v2) / (n1 * n2), -1.0, 1.0))
+            angle = float(np.degrees(np.arccos(cos_a)))
+            delta = 180.0 - angle
+            if delta < EXTERIOR_SEAM_CONTOUR_MIN_DELTA_DEG:
+                continue
+            x = float(p[0])
+            if x <= x_left_interior or x >= x_right_interior:
+                continue
+            xs.append(x)
+    if not xs:
+        return []
+    xs.sort()
+    uniq: list[float] = [xs[0]]
+    gap = max(4.0, EXTERIOR_SEAM_CORNER_SNAP_TOL_RATIO * float(bw))
+    for x in xs[1:]:
+        if abs(x - uniq[-1]) >= gap:
+            uniq.append(x)
+    return uniq
+
+
+def _snap_x_to_anchor(x: float, anchors: list[float], tol_px: float) -> float:
+    if not anchors:
+        return float(x)
+    best = min(anchors, key=lambda a: abs(a - x))
+    if abs(best - x) <= tol_px:
+        return float(best)
+    return float(x)
 
 
 def _split_mask_by_line(
@@ -1069,6 +1394,27 @@ def _count_large_components(mask: np.ndarray, min_area: int) -> int:
     return count
 
 
+def _component_masks_from_connected_components(mask: np.ndarray, min_area: int) -> list[np.ndarray]:
+    """Connected components only (without contour/watershed extra splitting)."""
+    mask_bin = (mask > 0).astype(np.uint8) * 255
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    mask_clean = cv2.morphologyEx(mask_bin, cv2.MORPH_OPEN, kernel, iterations=1)
+    mask_clean = cv2.morphologyEx(mask_clean, cv2.MORPH_CLOSE, kernel, iterations=1)
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask_clean, connectivity=8)
+
+    component_masks: list[np.ndarray] = []
+    for i in range(1, num_labels):
+        if int(stats[i, cv2.CC_STAT_AREA]) >= int(min_area):
+            comp = np.zeros_like(mask_clean)
+            comp[labels == i] = 255
+            component_masks.append(comp)
+
+    if not component_masks and cv2.countNonZero(mask_clean) >= int(min_area):
+        component_masks = [mask_clean]
+
+    return component_masks
+
+
 def _build_walls_from_component_masks(component_masks: list[np.ndarray]) -> list[dict]:
     raw_walls: list[dict] = []
     for comp_mask in component_masks:
@@ -1089,111 +1435,6 @@ def _build_walls_from_component_masks(component_masks: list[np.ndarray]) -> list
             item["regions"] = w["regions"]
         walls.append(item)
     return walls
-
-
-def _geometry_split_score(walls: list[dict], image_width: int) -> float:
-    """Heuristic confidence [0,1] for geometry-based wall split (штраф за лишнее дробление)."""
-    if not walls:
-        return 0.2
-    n = len(walls)
-    if n == 1:
-        return 0.38
-    xs = sorted(float(w["center"][0]) for w in walls)
-    spread = (xs[-1] - xs[0]) / max(1.0, float(image_width))
-    # Бонус за «несколько» стен ограничиваем; каждая лишняя после 2-х сильно снижает уверенность
-    step_bonus = 0.12 * min(n - 1, 2)
-    base = 0.42 + step_bonus + 0.35 * min(1.0, spread * 2.5)
-    over = max(0, n - 2)
-    penalty = 1.0 / (1.0 + 0.48 * over)
-    return float(np.clip(base * penalty, 0.12, 0.92))
-
-
-def _choose_final_walls_split(
-    wall_minus_holes: np.ndarray,
-    image_bgr: np.ndarray | None,
-    walls_geo: list[dict],
-    split_method_geo: str,
-    seam_debug: dict,
-    image_width: int,
-    image_height: int,
-) -> tuple[list[dict], str, dict, dict]:
-    """
-    Optionally replace geometry walls with depth-proxy plane clusters when scores favor it.
-    Returns (walls, split_method, seam_debug, split_arbiter).
-    """
-    score_geo = _geometry_split_score(walls_geo, image_width)
-    n_geo = len(walls_geo)
-    run_plane = image_bgr is not None and (
-        bool(EXTERIOR_PLANE_DEPTH_ENABLE)
-        or (bool(EXTERIOR_FRAGMENT_RESCUE) and n_geo > 3)
-        or (bool(EXTERIOR_PLANE_COMPARE_FEW_WALLS) and n_geo <= 2)
-    )
-    arb: dict = {
-        "score_geo": round(score_geo, 4),
-        "method_geo": split_method_geo,
-        "depth_enabled": bool(EXTERIOR_PLANE_DEPTH_ENABLE),
-        "few_walls_plane_compare": bool(EXTERIOR_PLANE_COMPARE_FEW_WALLS and n_geo <= 2),
-        "fragment_rescue": bool(EXTERIOR_FRAGMENT_RESCUE and n_geo > 3 and not EXTERIOR_PLANE_DEPTH_ENABLE),
-        "plane_compare_ran": False,
-    }
-
-    if not run_plane:
-        arb["chosen"] = "geometry"
-        return walls_geo, split_method_geo, seam_debug, arb
-
-    from exterior_depth_planes import plane_cluster_masks
-
-    min_area = int(image_width * image_height * EXTERIOR_MIN_WALL_AREA_RATIO)
-    masks_d, score_depth, dd = plane_cluster_masks(
-        image_bgr, wall_minus_holes, min_area, EXTERIOR_MAX_WALLS
-    )
-    arb["plane_compare_ran"] = True
-    arb["score_depth"] = round(float(score_depth), 4)
-    arb["depth_debug"] = dd
-
-    if len(masks_d) < 2:
-        arb["chosen"] = "geometry"
-        return walls_geo, split_method_geo, seam_debug, arb
-
-    walls_depth = _build_walls_from_component_masks(masks_d)
-    arb["walls_depth_count"] = len(walls_depth)
-    n_depth = len(walls_depth)
-
-    if n_depth < 2:
-        arb["chosen"] = "geometry"
-        return walls_geo, split_method_geo, seam_debug, arb
-
-    gap = n_geo - n_depth
-    # Явно: геометрия раздробила сильнее, чем k-means — берём более гладкое разбиение
-    if (
-        gap >= EXTERIOR_ARBITER_FRAGMENT_GAP
-        and score_depth >= EXTERIOR_ARBITER_MIN_DEPTH_SCORE
-    ):
-        arb["chosen"] = "depth_planes"
-        arb["pick_reason"] = "fragmentation_gap"
-        return walls_depth, "depth_planes", seam_debug, arb
-
-    gap_depth = n_depth - n_geo
-    if (
-        gap_depth >= EXTERIOR_ARBITER_UNDERSEG_GAP
-        and score_depth >= EXTERIOR_ARBITER_UNDERSEG_MIN_SCORE
-    ):
-        arb["chosen"] = "depth_planes"
-        arb["pick_reason"] = "undersegmentation_gap"
-        arb["undersegmentation"] = {
-            "n_geo": n_geo,
-            "n_depth": n_depth,
-            "gap": gap_depth,
-        }
-        return walls_depth, "depth_planes", seam_debug, arb
-
-    if score_depth >= score_geo + EXTERIOR_ARBITER_DEPTH_MARGIN:
-        arb["chosen"] = "depth_planes"
-        arb["pick_reason"] = "score_margin"
-        return walls_depth, "depth_planes", seam_debug, arb
-
-    arb["chosen"] = "geometry"
-    return walls_geo, split_method_geo, seam_debug, arb
 
 
 def _line_edge_strength(gray: np.ndarray, pt_a: np.ndarray, pt_b: np.ndarray, width: int = 7) -> float:
@@ -1257,6 +1498,7 @@ def _contour_vertical_seam_candidates(mask_crop: np.ndarray, bw: int, bh: int) -
     if per < 20.0:
         return []
 
+    x_left_interior, x_right_interior = _interior_x_bounds(mask_crop, bw)
     min_edge = max(6.0, EXTERIOR_SEAM_CONTOUR_MIN_EDGE_RATIO * float(min(bw, bh)))
     raw_bottom: list[dict] = []
     raw_top: list[dict] = []
@@ -1293,7 +1535,7 @@ def _contour_vertical_seam_candidates(mask_crop: np.ndarray, bw: int, bh: int) -
 
             px = float(p[0])
             py = float(p[1])
-            if px <= 2.0 or px >= float(bw - 3):
+            if px <= x_left_interior or px >= x_right_interior:
                 continue
             y_norm = py / max(1.0, float(bh - 1))
             zone = None
@@ -1311,9 +1553,11 @@ def _contour_vertical_seam_candidates(mask_crop: np.ndarray, bw: int, bh: int) -
             score_hint = bonus * (0.65 + 0.35 * delta_norm)
             rec = {
                 "mid_x_local": px,
+                "y_local": py,
                 "pt_a_local": np.array([px, 0.0], dtype=np.float64),
                 "pt_b_local": np.array([px, float(bh - 1)], dtype=np.float64),
                 "source_bonus": float(score_hint),
+                "delta_norm": float(delta_norm),
                 "source": f"contour_{zone}",
             }
             if zone == "bottom":
@@ -1321,32 +1565,120 @@ def _contour_vertical_seam_candidates(mask_crop: np.ndarray, bw: int, bh: int) -
             else:
                 raw_top.append(rec)
 
-    # Оставляем уникальные bottom-кандидаты по X (основа для seam)
-    out: list[dict] = []
-    seen_bottom: set[int] = set()
-    for rec in sorted(raw_bottom, key=lambda c: float(c["source_bonus"]), reverse=True):
-        x = float(rec["mid_x_local"])
-        x_bin = int(round(x / max(1.0, float(bw) * 0.03)))
-        if x_bin in seen_bottom:
-            continue
-        seen_bottom.add(x_bin)
-        out.append(rec)
+    if EXTERIOR_SEAM_PROFILE_ENABLE:
+        raw_bottom.extend(
+            _profile_kink_candidates(
+                mask_crop, bw, bh, "bottom", x_left_interior, x_right_interior
+            )
+        )
+        raw_top.extend(
+            _profile_kink_candidates(
+                mask_crop, bw, bh, "top", x_left_interior, x_right_interior
+            )
+        )
 
-    # Верхний излом учитываем только при подтверждении по нижнему X (иначе это, скорее всего, крыша).
-    if out:
-        x_tol = max(6.0, EXTERIOR_SEAM_CONTOUR_X_TOL_RATIO * float(bw))
-        seen_top: set[int] = set()
-        for rec in sorted(raw_top, key=lambda c: float(c["source_bonus"]), reverse=True):
+    def _unique_by_x(records: list[dict]) -> list[dict]:
+        out: list[dict] = []
+        seen: set[int] = set()
+        step = max(1.0, float(bw) * 0.03)
+        for rec in sorted(
+            records,
+            key=lambda c: (float(c.get("source_bonus", 0.0)), float(c.get("delta_norm", 0.0))),
+            reverse=True,
+        ):
             x = float(rec["mid_x_local"])
-            if not any(abs(x - float(b["mid_x_local"])) <= x_tol for b in out):
+            x_bin = int(round(x / step))
+            if x_bin in seen:
                 continue
-            x_bin = int(round(x / max(1.0, float(bw) * 0.03)))
-            if x_bin in seen_top:
-                continue
-            seen_top.add(x_bin)
+            seen.add(x_bin)
             out.append(rec)
+        return out
 
-    out.sort(key=lambda c: float(c["source_bonus"]), reverse=True)
+    bottom_cands = _unique_by_x(raw_bottom)
+    top_cands = _unique_by_x(raw_top)
+
+    # Локальная изоляция нижних профильных точек: плотные группы чаще являются бугорками шума.
+    bottom_profile_idx = [i for i, b in enumerate(bottom_cands) if str(b.get("source", "")) == "profile_bottom"]
+    for i in bottom_profile_idx:
+        xi = float(bottom_cands[i].get("mid_x_local", 0.0))
+        other = [
+            abs(xi - float(bottom_cands[j].get("mid_x_local", 0.0)))
+            for j in bottom_profile_idx
+            if j != i
+        ]
+        nearest = min(other) if other else 1e9
+        bottom_cands[i]["neighbor_dx"] = float(nearest)
+
+    def _conf(rec: dict) -> float:
+        base = float(rec.get("source_bonus", 0.0)) + 0.35 * float(rec.get("delta_norm", 0.0))
+        q = float(rec.get("quality_score", 0.0))
+        if str(rec.get("source", "")).startswith("profile_"):
+            base += 0.10 * max(0.0, min(1.0, q))
+        return base
+
+    x_tol = max(
+        6.0,
+        max(EXTERIOR_SEAM_CONTOUR_X_TOL_RATIO, EXTERIOR_SEAM_TANDEM_X_TOL_RATIO) * float(bw),
+    )
+    used_top: set[int] = set()
+    for b in bottom_cands:
+        bx = float(b["mid_x_local"])
+        best_j = -1
+        best_dx = 1e9
+        for j, t in enumerate(top_cands):
+            if j in used_top:
+                continue
+            dx = abs(float(t["mid_x_local"]) - bx)
+            if dx <= x_tol and dx < best_dx:
+                best_dx = dx
+                best_j = j
+        if best_j >= 0:
+            # Тандем разрешаем только с качественным нижним профильным изломом.
+            src_b = str(b.get("source", ""))
+            q_b = float(b.get("quality_score", 0.0))
+            cluster_n = int(b.get("cluster_size", 1))
+            neighbor_dx = float(b.get("neighbor_dx", 1e9))
+            min_neighbor_gap = max(10.0, EXTERIOR_SEAM_PROFILE_TANDEM_MIN_NEIGHBOR_GAP_RATIO * float(bw))
+            allow_tandem = True
+            if src_b == "profile_bottom":
+                allow_tandem = (
+                    q_b >= EXTERIOR_SEAM_PROFILE_QUALITY_HIGH
+                    and cluster_n <= 2
+                    and neighbor_dx >= min_neighbor_gap
+                )
+            if allow_tandem:
+                used_top.add(best_j)
+                b["tandem_match"] = True
+                b["source_bonus"] = float(b.get("source_bonus", 0.0)) + EXTERIOR_SEAM_TANDEM_BOOST
+                top_cands[best_j]["tandem_match"] = True
+                top_cands[best_j]["source_bonus"] = float(top_cands[best_j].get("source_bonus", 0.0)) + (
+                    EXTERIOR_SEAM_TANDEM_BOOST * 0.7
+                )
+
+    out: list[dict] = list(bottom_cands)
+    matched_tops = [t for t in top_cands if bool(t.get("tandem_match", False))]
+    out.extend(matched_tops)
+
+    bottom_best = max((_conf(b) for b in bottom_cands), default=0.0)
+    top_best = max((_conf(t) for t in top_cands), default=0.0)
+
+    # Если низ слабый/неполный, разрешаем fallback на сильные верхние изломы.
+    if (not bottom_cands and top_best >= EXTERIOR_SEAM_TOP_FALLBACK_CONF_MIN) or (
+        bottom_best < EXTERIOR_SEAM_BOTTOM_CONF_MIN and top_best >= EXTERIOR_SEAM_TOP_FALLBACK_CONF_MIN
+    ):
+        for t in top_cands:
+            if t not in out and _conf(t) >= EXTERIOR_SEAM_TOP_FALLBACK_CONF_MIN:
+                out.append(t)
+
+    out = _unique_by_x(out)
+    out.sort(
+        key=lambda c: (
+            float(c.get("source_bonus", 0.0)),
+            float(c.get("delta_norm", 0.0)),
+            1.0 if bool(c.get("tandem_match", False)) else 0.0,
+        ),
+        reverse=True,
+    )
     return out[: max(1, EXTERIOR_SEAM_CONTOUR_MAX_K)]
 
 
@@ -1364,6 +1696,7 @@ def _debug_contour_corner_points(mask: np.ndarray) -> dict:
     if per < 20.0:
         return {"bottom": [], "top": []}
 
+    x_left_interior, x_right_interior = _interior_x_bounds(mask, w)
     min_edge = max(6.0, EXTERIOR_SEAM_CONTOUR_MIN_EDGE_RATIO * float(min(w, h)))
     out_bottom: list[dict] = []
     out_top: list[dict] = []
@@ -1401,6 +1734,8 @@ def _debug_contour_corner_points(mask: np.ndarray) -> dict:
 
             px = float(p[0])
             py = float(p[1])
+            if px <= x_left_interior or px >= x_right_interior:
+                continue
             y_norm = py / max(1.0, float(h - 1))
             zone = ""
             if y_norm >= EXTERIOR_SEAM_CONTOUR_BOTTOM_Y_MIN:
@@ -1427,11 +1762,53 @@ def _debug_contour_corner_points(mask: np.ndarray) -> dict:
             else:
                 out_top.append(rec)
 
+    profile_bottom_raw = (
+        _profile_kink_candidates(mask, w, h, "bottom", x_left_interior, x_right_interior)
+        if EXTERIOR_SEAM_PROFILE_ENABLE
+        else []
+    )
+    profile_top_raw = (
+        _profile_kink_candidates(mask, w, h, "top", x_left_interior, x_right_interior)
+        if EXTERIOR_SEAM_PROFILE_ENABLE
+        else []
+    )
+    profile_bottom = [
+        {
+            "x": round(float(r.get("mid_x_local", 0.0)), 2),
+            "y": round(float(r.get("y_local", 0.0)), 2),
+            "delta_norm": round(float(r.get("delta_norm", 0.0)), 3),
+            "score_hint": round(float(r.get("source_bonus", 0.0)), 3),
+            "quality_score": round(float(r.get("quality_score", 0.0)), 3),
+            "quality_tier": str(r.get("quality_tier", "")),
+            "sign_flips": int(r.get("sign_flips", 0)),
+            "cluster_size": int(r.get("cluster_size", 1)),
+            "cluster_span_px": round(float(r.get("cluster_span_px", 0.0)), 2),
+            "neighbor_dx": round(float(r.get("neighbor_dx", 0.0)), 2) if "neighbor_dx" in r else None,
+        }
+        for r in profile_bottom_raw
+    ]
+    profile_top = [
+        {
+            "x": round(float(r.get("mid_x_local", 0.0)), 2),
+            "y": round(float(r.get("y_local", 0.0)), 2),
+            "delta_norm": round(float(r.get("delta_norm", 0.0)), 3),
+            "score_hint": round(float(r.get("source_bonus", 0.0)), 3),
+            "quality_score": round(float(r.get("quality_score", 0.0)), 3),
+            "quality_tier": str(r.get("quality_tier", "")),
+            "sign_flips": int(r.get("sign_flips", 0)),
+            "cluster_size": int(r.get("cluster_size", 1)),
+            "cluster_span_px": round(float(r.get("cluster_span_px", 0.0)), 2),
+        }
+        for r in profile_top_raw
+    ]
+
     out_bottom.sort(key=lambda d: (float(d["x"])))
     out_top.sort(key=lambda d: (float(d["x"])))
     return {
-        "bottom": out_bottom[:20],
-        "top": out_top[:20],
+        "bottom": out_bottom,
+        "top": out_top,
+        "profile_bottom": profile_bottom,
+        "profile_top": profile_top,
     }
 
 
@@ -1493,7 +1870,12 @@ def _seam_split_single_region(
         "best_score": 0.0,
         "best_line": None,
         "top_lines": [],
+        "all_scored_lines": [],
+        "seam_candidates_raw": [],
+        "seam_candidates_total": 0,
+        "seam_candidates_sources": {},
         "contour_candidates_count": 0,
+        "hough_enabled": bool(EXTERIOR_SEAM_HOUGH_ENABLE),
         "used": False,
     }
     x, y, w, h = cv2.boundingRect(region_mask)
@@ -1517,18 +1899,20 @@ def _seam_split_single_region(
     gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
     gray = cv2.bitwise_and(gray, gray, mask=(mask_crop > 0).astype(np.uint8) * 255)
     gray = cv2.GaussianBlur(gray, (5, 5), 0)
-    edges = cv2.Canny(gray, 50, 150, apertureSize=3)
+    lines = None
+    if EXTERIOR_SEAM_HOUGH_ENABLE:
+        edges = cv2.Canny(gray, 50, 150, apertureSize=3)
+        lines = cv2.HoughLinesP(
+            edges,
+            rho=1,
+            theta=np.pi / 180.0,
+            threshold=max(40, int(0.15 * bh)),
+            minLineLength=max(30, int(EXTERIOR_SEAM_MIN_LINE_RATIO * bh)),
+            maxLineGap=max(10, int(0.06 * bh)),
+        )
 
-    lines = cv2.HoughLinesP(
-        edges,
-        rho=1,
-        theta=np.pi / 180.0,
-        threshold=max(40, int(0.15 * bh)),
-        minLineLength=max(30, int(EXTERIOR_SEAM_MIN_LINE_RATIO * bh)),
-        maxLineGap=max(10, int(0.06 * bh)),
-    )
-
-    center_margin = EXTERIOR_SEAM_CENTER_MARGIN_RATIO
+    center_margin_hough = EXTERIOR_SEAM_CENTER_MARGIN_RATIO
+    center_margin_contour = min(center_margin_hough, EXTERIOR_SEAM_CONTOUR_CENTER_MARGIN_RATIO)
     best_score = -1.0
     best_line_local: tuple[np.ndarray, np.ndarray] | None = None
     candidate_lines: list[dict] = []
@@ -1562,12 +1946,42 @@ def _seam_split_single_region(
     seam_candidates.extend(contour_candidates)
     if not seam_candidates:
         return None, dbg
+    dbg["seam_candidates_total"] = len(seam_candidates)
+    src_stats: dict[str, int] = {}
+    raw_recs: list[dict] = []
+    for c in seam_candidates:
+        src = str(c.get("source", ""))
+        src_stats[src] = src_stats.get(src, 0) + 1
+        raw_recs.append(
+            {
+                "source": src,
+                "x_local": round(float(c.get("mid_x_local", 0.0)), 2),
+                "delta_norm": round(float(c.get("delta_norm", 0.0)), 3),
+                "source_bonus": round(float(c.get("source_bonus", 0.0)), 4),
+                "tandem_match": bool(c.get("tandem_match", False)),
+                "quality_score": round(float(c.get("quality_score", 0.0)), 3),
+                "quality_tier": str(c.get("quality_tier", "")),
+                "cluster_size": int(c.get("cluster_size", 1)),
+                "cluster_span_px": round(float(c.get("cluster_span_px", 0.0)), 2),
+                "neighbor_dx": round(float(c.get("neighbor_dx", 0.0)), 2) if "neighbor_dx" in c else None,
+            }
+        )
+    dbg["seam_candidates_sources"] = src_stats
+    dbg["seam_candidates_raw"] = raw_recs
+    anchors_x = _collect_corner_anchor_xs(mask_crop, bw, bh)
+    snap_tol_px = max(4.0, EXTERIOR_SEAM_CORNER_SNAP_TOL_RATIO * float(bw))
 
     for cand in seam_candidates:
-        mid_x = float(cand["mid_x_local"])
+        original_mid_x = float(cand["mid_x_local"])
+        mid_x = original_mid_x
         mid_x_norm = mid_x / max(1.0, float(bw - 1))
-        if mid_x_norm < center_margin or mid_x_norm > (1.0 - center_margin):
+        src = str(cand.get("source", ""))
+        margin = center_margin_contour if (src.startswith("contour_") or src.startswith("profile_")) else center_margin_hough
+        if mid_x_norm < margin or mid_x_norm > (1.0 - margin):
             continue
+        if src.startswith("contour_") or src.startswith("profile_"):
+            mid_x = _snap_x_to_anchor(mid_x, anchors_x, snap_tol_px)
+            mid_x_norm = mid_x / max(1.0, float(bw - 1))
         mid_y = max(0, min(bh - 1, int(round(0.5 * (bh - 1)))))
         mid_xi = int(round(mid_x))
         mid_xi = max(0, min(bw - 1, mid_xi))
@@ -1577,8 +1991,8 @@ def _seam_split_single_region(
                 continue
             mid_y = int(ys_nz[ys_nz.size // 2])
 
-        pt_a = cand["pt_a_local"]
-        pt_b = cand["pt_b_local"]
+        pt_a = np.array([mid_x, 0.0], dtype=np.float64)
+        pt_b = np.array([mid_x, float(bh - 1)], dtype=np.float64)
         split_res = _split_mask_by_line(mask_crop, float(pt_a[0]), float(pt_a[1]), float(pt_b[0]), float(pt_b[1]))
         if split_res is None:
             continue
@@ -1596,6 +2010,13 @@ def _seam_split_single_region(
             + EXTERIOR_SEAM_W_CENTER * max(0.0, center_score)
         )
         score += float(cand.get("source_bonus", 0.0))
+        delta_norm = float(cand.get("delta_norm", 0.0))
+        if src in {"contour_bottom", "profile_bottom"}:
+            score += 0.10 + 0.20 * max(0.0, min(1.0, delta_norm))
+        elif src in {"contour_top", "profile_top"}:
+            score += 0.04 + 0.08 * max(0.0, min(1.0, delta_norm))
+        if bool(cand.get("tandem_match", False)):
+            score += EXTERIOR_SEAM_TANDEM_BOOST * 0.6
         candidates_count += 1
         candidate_lines.append(
             {
@@ -1603,6 +2024,15 @@ def _seam_split_single_region(
                 "mid_x_local": float(mid_x),
                 "line_local": (pt_a.copy(), pt_b.copy()),
                 "source": str(cand.get("source", "")),
+                "delta_norm": float(delta_norm),
+                "balance": float(balance),
+                "edge_score": float(edge_score),
+                "center_score": float(max(0.0, center_score)),
+                "x_before_snap": float(original_mid_x),
+                "x_after_snap": float(mid_x),
+                "tandem_match": bool(cand.get("tandem_match", False)),
+                "quality_score": float(cand.get("quality_score", 0.0)),
+                "quality_tier": str(cand.get("quality_tier", "")),
             }
         )
         if score > best_score:
@@ -1644,6 +2074,37 @@ def _seam_split_single_region(
             }
         )
     dbg["top_lines"] = top_lines_dbg
+    all_scored = sorted(candidate_lines, key=lambda c: float(c["score"]), reverse=True)
+    all_scored_dbg: list[dict] = []
+    for cand in all_scored:
+        pt_a_l, pt_b_l = cand["line_local"]
+        pt_a_g = np.array([pt_a_l[0] + x1i, pt_a_l[1] + y1i], dtype=np.float64)
+        pt_b_g = np.array([pt_b_l[0] + x1i, pt_b_l[1] + y1i], dtype=np.float64)
+        all_scored_dbg.append(
+            {
+                "score": round(float(cand["score"]), 4),
+                "source": str(cand.get("source", "")),
+                "line": [
+                    round(float(pt_a_g[0]), 2),
+                    round(float(pt_a_g[1]), 2),
+                    round(float(pt_b_g[0]), 2),
+                    round(float(pt_b_g[1]), 2),
+                ],
+                "delta_norm": round(float(cand.get("delta_norm", 0.0)), 3),
+                "balance": round(float(cand.get("balance", 0.0)), 4),
+                "edge_score": round(float(cand.get("edge_score", 0.0)), 4),
+                "center_score": round(float(cand.get("center_score", 0.0)), 4),
+                "x_before_snap": round(float(cand.get("x_before_snap", 0.0)), 2),
+                "x_after_snap": round(float(cand.get("x_after_snap", 0.0)), 2),
+                "tandem_match": bool(cand.get("tandem_match", False)),
+                "quality_score": round(float(cand.get("quality_score", 0.0)), 3),
+                "quality_tier": str(cand.get("quality_tier", "")),
+                "cluster_size": int(cand.get("cluster_size", 1)),
+                "cluster_span_px": round(float(cand.get("cluster_span_px", 0.0)), 2),
+                "neighbor_dx": round(float(cand.get("neighbor_dx", 0.0)), 2) if "neighbor_dx" in cand else None,
+            }
+        )
+    dbg["all_scored_lines"] = all_scored_dbg
 
     pt_a_local, pt_b_local = best_line_local
     pt_a_global = np.array([pt_a_local[0] + x1i, pt_a_local[1] + y1i], dtype=np.float64)
@@ -1726,9 +2187,6 @@ def _auto_split_by_corner_seam(
     seam_debug["best_score"] = float(inner_dbg.get("best_score", 0.0))
     seam_debug["best_line"] = inner_dbg.get("best_line")
     seam_debug["top_lines"] = inner_dbg.get("top_lines", [])
-    if component_masks is None:
-        return None, seam_debug
-
     # Выбираем лучший шов из top-K кандидатов: сначала по числу финальных стен, затем по score линии.
     trials: list[dict] = []
     top_lines = inner_dbg.get("top_lines", [])
@@ -1768,7 +2226,7 @@ def _auto_split_by_corner_seam(
         seam_debug["best_line"] = best["line"]
         seam_debug["best_score"] = float(best["score"])
         seam_debug["second_pass"] = best["second_pass"]
-    else:
+    elif component_masks is not None:
         refined, second_dbg = _second_pass_seam_on_components(
             component_masks,
             image_bgr,
@@ -1779,6 +2237,8 @@ def _auto_split_by_corner_seam(
         )
         seam_debug["second_pass"] = second_dbg
         walls = _build_walls_from_component_masks(refined)
+    else:
+        return None, seam_debug
 
     if len(walls) < 2:
         return None, seam_debug
@@ -1817,8 +2277,44 @@ async def run_exterior_pipeline(image_bytes: bytes, image_width: int, image_heig
 
     wall_mask = await sam_mask_from_bbox(image_bytes, building_bbox)
 
-    openings = await detect_openings_bboxes(image_bytes, building_bbox)
+    if wall_mask.shape != (image_height, image_width):
+        wall_mask = cv2.resize(wall_mask, (image_width, image_height), interpolation=cv2.INTER_NEAREST)
 
+    # ВАЖНО: сначала делим фасад на стены по цельной маске (без выреза окон/дверей),
+    # затем отдельно считаем holes и отдаём wall_minus_holes для визуализации/клиппинга.
+    no_holes_mask = np.zeros_like(wall_mask)
+    wall_for_split = postprocess_masks(wall_mask, no_holes_mask)
+
+    image_bgr = _decode_image_bgr(image_bytes, image_width, image_height)
+    min_area = int(image_width * image_height * EXTERIOR_MIN_WALL_AREA_RATIO)
+    comp_count = _count_large_components(wall_for_split, min_area)
+    split_method_geo = "geometry_fallback"
+    walls_geo: list[dict]
+    seam_debug: dict = {}
+    if comp_count <= 1:
+        walls_seam, seam_debug = _auto_split_by_corner_seam(
+            wall_for_split, image_bgr, building_bbox, image_width, image_height
+        )
+        if walls_seam and len(walls_seam) >= 2:
+            walls_geo = walls_seam
+            split_method_geo = "seam"
+        else:
+            walls_kink = _split_by_bottom_contour_kink_once(
+                wall_for_split, image_width, image_height, min_area
+            )
+            if walls_kink and len(walls_kink) >= 2:
+                walls_geo = walls_kink
+                split_method_geo = "bottom_kink"
+            else:
+                component_masks = _component_masks_from_connected_components(wall_for_split, min_area)
+                walls_geo = _build_walls_from_component_masks(component_masks)
+                split_method_geo = "connected_components_fallback"
+    else:
+        component_masks = _component_masks_from_connected_components(wall_for_split, min_area)
+        walls_geo = _build_walls_from_component_masks(component_masks)
+        split_method_geo = "connected_components"
+
+    openings = await detect_openings_bboxes(image_bytes, building_bbox)
     holes_mask = np.zeros((image_height, image_width), dtype=np.uint8)
     all_opening_bboxes = openings["windows"] + openings["doors"]
     for ob in all_opening_bboxes:
@@ -1828,40 +2324,9 @@ async def run_exterior_pipeline(image_bytes: bytes, image_width: int, image_heig
                 holes_mask = cv2.bitwise_or(holes_mask, opening_mask)
         except Exception:
             continue
-
-    if wall_mask.shape != (image_height, image_width):
-        wall_mask = cv2.resize(wall_mask, (image_width, image_height), interpolation=cv2.INTER_NEAREST)
     if holes_mask.shape != (image_height, image_width):
         holes_mask = cv2.resize(holes_mask, (image_width, image_height), interpolation=cv2.INTER_NEAREST)
-
     wall_minus_holes = postprocess_masks(wall_mask, holes_mask)
-
-    image_bgr = _decode_image_bgr(image_bytes, image_width, image_height)
-    min_area = int(image_width * image_height * EXTERIOR_MIN_WALL_AREA_RATIO)
-    comp_count = _count_large_components(wall_minus_holes, min_area)
-    split_method_geo = "geometry_fallback"
-    walls_geo: list[dict]
-    seam_debug: dict = {}
-    if comp_count <= 1:
-        walls_seam, seam_debug = _auto_split_by_corner_seam(
-            wall_minus_holes, image_bgr, building_bbox, image_width, image_height
-        )
-        if walls_seam and len(walls_seam) >= 2:
-            walls_geo = walls_seam
-            split_method_geo = "seam"
-        else:
-            walls_kink = _split_by_bottom_contour_kink_once(
-                wall_minus_holes, image_width, image_height, min_area
-            )
-            if walls_kink and len(walls_kink) >= 2:
-                walls_geo = walls_kink
-                split_method_geo = "bottom_kink"
-            else:
-                walls_geo = split_walls_from_mask(wall_minus_holes, image_width, image_height)
-                split_method_geo = "geometry_mask"
-    else:
-        walls_geo = split_walls_from_mask(wall_minus_holes, image_width, image_height)
-        split_method_geo = "geometry_cc"
 
     # Упрощённый режим: для отладки seam/deometry НЕ переключаемся на depth-арбитр.
     # Финальный результат = геометрия/seam, чтобы поведение было предсказуемым.
@@ -1875,19 +2340,123 @@ async def run_exterior_pipeline(image_bytes: bytes, image_width: int, image_heig
 
     if EXTERIOR_DEBUG_SAVE:
         try:
+            corner_dbg = _debug_contour_corner_points(wall_for_split)
             # Save masks as PNGs for manual inspection.
             cv2.imwrite(os.path.join(call_dir, "wall.png"), wall_mask)
+            cv2.imwrite(os.path.join(call_dir, "wall_for_split.png"), wall_for_split)
             cv2.imwrite(os.path.join(call_dir, "holes.png"), holes_mask)
             cv2.imwrite(os.path.join(call_dir, "wall_minus_holes.png"), wall_minus_holes)
 
             # Save an overlay visualization (polygons drawn on top of mask).
-            overlay = cv2.cvtColor(wall_minus_holes, cv2.COLOR_GRAY2BGR)
+            overlay = cv2.cvtColor(wall_for_split, cv2.COLOR_GRAY2BGR)
             for w in walls:
                 poly = w.get("polygon") or []
                 if len(poly) >= 3:
                     pts = np.array(poly, dtype=np.int32).reshape(-1, 2)
                     cv2.polylines(overlay, [pts], isClosed=True, color=(0, 0, 255), thickness=2)
             cv2.imwrite(os.path.join(call_dir, "polygons_overlay.png"), overlay)
+
+            # Save explicit kink points with angle labels.
+            kinks_overlay = cv2.cvtColor(wall_for_split, cv2.COLOR_GRAY2BGR)
+
+            def _draw_kinks(items: list[dict], color: tuple[int, int, int], prefix: str) -> None:
+                # Сортируем по силе и прореживаем близкие подписи для читаемости.
+                def _strength(rec: dict) -> float:
+                    if "delta_deg" in rec:
+                        return float(rec.get("delta_deg", 0.0))
+                    return float(rec.get("delta_norm", 0.0)) * 90.0
+
+                ranked = sorted(items, key=_strength, reverse=True)
+                placed: list[tuple[int, int]] = []
+                shown = 0
+                for rec in ranked:
+                    if shown >= max(1, EXTERIOR_DEBUG_KINK_LABEL_TOP_K):
+                        break
+                    x = int(round(float(rec.get("x", rec.get("mid_x_local", 0.0)))))
+                    y = int(round(float(rec.get("y", rec.get("y_local", 0.0)))))
+                    if x <= 0 or y <= 0 or x >= image_width - 1 or y >= image_height - 1:
+                        continue
+                    if any(abs(x - px) < EXTERIOR_DEBUG_KINK_LABEL_MIN_GAP_PX and abs(y - py) < EXTERIOR_DEBUG_KINK_LABEL_MIN_GAP_PX for px, py in placed):
+                        continue
+                    placed.append((x, y))
+                    shown += 1
+                    cv2.circle(kinks_overlay, (x, y), 6, color, -1)
+                    cv2.circle(kinks_overlay, (x, y), 8, (0, 0, 0), 1)
+                    lbl = (
+                        f"{prefix}:{float(rec.get('delta_deg', rec.get('delta_norm', 0.0) * 90.0)):.1f}"
+                    )
+                    (tw, th), _ = cv2.getTextSize(lbl, cv2.FONT_HERSHEY_SIMPLEX, 0.42, 1)
+                    tx = x + 8
+                    ty = max(16, y - 8)
+                    cv2.rectangle(
+                        kinks_overlay,
+                        (tx - 2, ty - th - 3),
+                        (tx + tw + 2, ty + 3),
+                        (255, 255, 255),
+                        thickness=-1,
+                    )
+                    cv2.putText(
+                        kinks_overlay,
+                        lbl,
+                        (tx, ty),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.42,
+                        (0, 0, 0),
+                        1,
+                        cv2.LINE_AA,
+                    )
+
+            _draw_kinks(corner_dbg.get("bottom") or [], (0, 255, 255), "B")
+            _draw_kinks(corner_dbg.get("top") or [], (255, 255, 0), "T")
+            _draw_kinks(corner_dbg.get("profile_bottom") or [], (0, 165, 255), "PB")
+            _draw_kinks(corner_dbg.get("profile_top") or [], (255, 0, 255), "PT")
+            cv2.imwrite(os.path.join(call_dir, "kinks_overlay.png"), kinks_overlay)
+
+            # Save profile denoise stages: raw -> median-smoothed -> piecewise.
+            bw_dbg = int(wall_for_split.shape[1])
+            bh_dbg = int(wall_for_split.shape[0])
+            x_margin_dbg = max(2.0, EXTERIOR_SEAM_CONTOUR_EDGE_EXCLUDE_RATIO * float(bw_dbg))
+            x_left_dbg = x_margin_dbg
+            x_right_dbg = float(bw_dbg - 1) - x_margin_dbg
+            _, pb_dbg = _profile_kink_candidates_with_debug(
+                wall_for_split, bw_dbg, bh_dbg, "bottom", x_left_dbg, x_right_dbg
+            )
+            _, pt_dbg = _profile_kink_candidates_with_debug(
+                wall_for_split, bw_dbg, bh_dbg, "top", x_left_dbg, x_right_dbg
+            )
+            denoise_overlay = cv2.cvtColor(wall_for_split, cv2.COLOR_GRAY2BGR)
+
+            def _draw_profile_stage(stage: dict, color_smooth: tuple[int, int, int], color_piece: tuple[int, int, int]) -> None:
+                smooth = stage.get("smoothed_profile") or []
+                piece = stage.get("piecewise_profile") or []
+                kinks = stage.get("kinks") or []
+                if len(smooth) >= 2:
+                    spts = np.array([[int(round(p[0])), int(round(p[1]))] for p in smooth], dtype=np.int32)
+                    cv2.polylines(denoise_overlay, [spts], isClosed=False, color=color_smooth, thickness=1)
+                if len(piece) >= 2:
+                    ppts = np.array([[int(round(p[0])), int(round(p[1]))] for p in piece], dtype=np.int32)
+                    cv2.polylines(denoise_overlay, [ppts], isClosed=False, color=color_piece, thickness=2)
+                for rec in kinks:
+                    x = int(round(float(rec.get("x", 0.0))))
+                    y = int(round(float(rec.get("y", 0.0))))
+                    if x <= 0 or y <= 0 or x >= bw_dbg - 1 or y >= bh_dbg - 1:
+                        continue
+                    cv2.circle(denoise_overlay, (x, y), 4, color_piece, -1)
+                    lbl = f"d={float(rec.get('delta_deg', 0.0)):.0f}"
+                    cv2.putText(
+                        denoise_overlay,
+                        lbl,
+                        (x + 5, max(14, y - 5)),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.35,
+                        (255, 255, 255),
+                        1,
+                        cv2.LINE_AA,
+                    )
+
+            _draw_profile_stage(pb_dbg, (0, 255, 0), (0, 165, 255))   # bottom
+            _draw_profile_stage(pt_dbg, (255, 0, 0), (255, 0, 255))   # top
+            cv2.imwrite(os.path.join(call_dir, "profile_denoise_overlay.png"), denoise_overlay)
 
             # Save response summary (no base64 to keep files small).
             import json as _json
@@ -1902,7 +2471,22 @@ async def run_exterior_pipeline(image_bytes: bytes, image_width: int, image_heig
                     "split_method": split_method,
                     "seam_debug": seam_debug,
                     "split_arbiter": split_arbiter,
-                    "contour_corner_debug": _debug_contour_corner_points(wall_minus_holes),
+                    "split_mask_used": "wall_for_split",
+                    "contour_corner_debug": corner_dbg,
+                    "profile_denoise_debug": {
+                        "bottom_vertices": len((pb_dbg or {}).get("piecewise_profile") or []),
+                        "top_vertices": len((pt_dbg or {}).get("piecewise_profile") or []),
+                        "bottom_kinks": len((pb_dbg or {}).get("kinks") or []),
+                        "top_kinks": len((pt_dbg or {}).get("kinks") or []),
+                        "rdp_eps_px": EXTERIOR_SEAM_PROFILE_RDP_EPS_PX,
+                        "quality_min": EXTERIOR_SEAM_PROFILE_QUALITY_MIN,
+                        "quality_high": EXTERIOR_SEAM_PROFILE_QUALITY_HIGH,
+                        "prom_ref_px": EXTERIOR_SEAM_PROFILE_PROM_REF_PX,
+                        "seg_ref_px": EXTERIOR_SEAM_PROFILE_SEG_REF_PX,
+                        "cluster_gap_ratio": EXTERIOR_SEAM_PROFILE_CLUSTER_GAP_RATIO,
+                        "cluster_gap_min_px": EXTERIOR_SEAM_PROFILE_CLUSTER_GAP_MIN_PX,
+                        "tandem_min_neighbor_gap_ratio": EXTERIOR_SEAM_PROFILE_TANDEM_MIN_NEIGHBOR_GAP_RATIO,
+                    },
                 },
                 "walls": [
                     {
