@@ -18,6 +18,9 @@ export interface DetectExteriorResponse {
     windows_bboxes: number[][]
     doors_bboxes: number[][]
     walls_count: number
+    split_method?: string
+    seam_debug?: Record<string, unknown>
+    split_arbiter?: Record<string, unknown>
   }
 }
 
@@ -75,8 +78,14 @@ export interface SplitExteriorResponse {
   walls: import('@/store/useWallStore').WallData[]
 }
 
+export interface SplitExteriorTargetWall {
+  targetWallId: number
+  walls: WallData[]
+}
+
 /**
  * Разделить фасад маской по линии (два клика). Координаты в image_size.
+ * Если передан splitTarget — режется только полигон выбранной стены, остальные стены сохраняются.
  */
 export async function splitExteriorWalls(
   maskBase64: string,
@@ -85,7 +94,8 @@ export async function splitExteriorWalls(
   x2: number,
   y2: number,
   imageWidth: number,
-  imageHeight: number
+  imageHeight: number,
+  splitTarget?: SplitExteriorTargetWall
 ): Promise<SplitExteriorResponse> {
   const formData = new FormData()
   formData.append('mask_base64', maskBase64)
@@ -95,6 +105,10 @@ export async function splitExteriorWalls(
   formData.append('y2', String(y2))
   formData.append('image_width', String(imageWidth))
   formData.append('image_height', String(imageHeight))
+  if (splitTarget != null) {
+    formData.append('target_wall_id', String(splitTarget.targetWallId))
+    formData.append('walls_json', JSON.stringify(splitTarget.walls))
+  }
 
   const res = await fetch('/api/exterior/split', {
     method: 'POST',

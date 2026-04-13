@@ -30,6 +30,7 @@ export function Canvas2D({
 
   const walls = useWallStore((s) => s.walls)
   const wallImageSize = useWallStore((s) => s.wallImageSize)
+  const exteriorMaskBase64 = useWallStore((s) => s.exteriorMaskBase64)
   const selectedWallId = useWallStore((s) => s.selectedWallId)
   const isDetecting = useWallStore((s) => s.isDetecting)
   const setWallTexture = useWallStore((s) => s.setWallTexture)
@@ -39,6 +40,8 @@ export function Canvas2D({
   const setEditWallCorners = useUIStore((s) => s.setEditWallCorners)
   const editCornersMode = useUIStore((s) => s.editCornersMode)
   const setEditCornersMode = useUIStore((s) => s.setEditCornersMode)
+  const exteriorSplitLineActive = useUIStore((s) => s.exteriorSplitLineActive)
+  const setExteriorSplitLineActive = useUIStore((s) => s.setExteriorSplitLineActive)
 
   const { selectedColor, colorizeOpacity, getColorizedTextureUrl } = useColorize()
 
@@ -61,14 +64,18 @@ export function Canvas2D({
     isReady,
     loadPhotoFromDataUrl,
     setWallOverlays,
+    setExteriorMaskOverlay,
     applyTexture,
     applyTextureToWall,
+    applyTextureToAllWalls,
     highlightSelectedWall,
     syncCornerHandles,
+    clearFacadeSplitDraft,
     textureScale,
     setTextureScale,
     hasTextureLayer,
     isPhotoLoaded,
+    canvasInstanceRef,
   } = useCanvas2D({
     canvasRef,
     containerWidth: canvasSize.width,
@@ -88,6 +95,34 @@ export function Canvas2D({
       setWallOverlays(walls, wallImageSize)
     }
   }, [isReady, isPhotoLoaded, walls, wallImageSize, wallTextures, hideWallMasks, wallVisibility, setWallOverlays])
+
+  useEffect(() => {
+    if (!isReady || !isPhotoLoaded) return
+    if (sceneMode === 'exterior' && exteriorMaskBase64 && wallImageSize) {
+      void setExteriorMaskOverlay(exteriorMaskBase64, wallImageSize)
+    } else {
+      void setExteriorMaskOverlay(null, null)
+    }
+  }, [
+    isReady,
+    isPhotoLoaded,
+    sceneMode,
+    exteriorMaskBase64,
+    wallImageSize,
+    setExteriorMaskOverlay,
+  ])
+
+  useEffect(() => {
+    if (!isReady) return
+    const c = canvasInstanceRef.current
+    if (!c) return
+    if (exteriorSplitLineActive && sceneMode === 'exterior') {
+      c.defaultCursor = 'crosshair'
+    } else {
+      c.defaultCursor = 'default'
+    }
+    c.requestRenderAll()
+  }, [isReady, exteriorSplitLineActive, sceneMode, canvasInstanceRef])
 
   useEffect(() => {
     if (isReady) {
@@ -132,6 +167,17 @@ export function Canvas2D({
     }
   }, [selectedMaterial?.texture.url, selectedWallId, walls, wallImageSize, applyTexture, applyTextureToWall, setWallTexture, getTextureUrl])
 
+  const handleApplyFacadeProfile = useCallback(async () => {
+    const rawUrl = selectedMaterial?.texture.url
+    if (!rawUrl || walls.length === 0 || sceneMode !== 'exterior') return
+    try {
+      const url = await getTextureUrl(rawUrl)
+      await applyTextureToAllWalls(url)
+    } catch (err) {
+      console.error('Не удалось применить профиль ко всем областям фасада:', rawUrl, err)
+    }
+  }, [selectedMaterial?.texture.url, walls.length, sceneMode, getTextureUrl, applyTextureToAllWalls])
+
   // Авто-применение при смене цвета (debounce 300ms)
   const colorKeyRef = useRef<string>('')
   useEffect(() => {
@@ -160,8 +206,18 @@ export function Canvas2D({
               disabled={!selectedMaterial}
               className="tour-apply-texture rounded-lg bg-gray-800 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-gray-700 disabled:opacity-50"
             >
-              Применить текстуру
+              Применить профиль
             </button>
+            {sceneMode === 'exterior' && (
+              <button
+                type="button"
+                onClick={handleApplyFacadeProfile}
+                disabled={!selectedMaterial || walls.length === 0}
+                className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm transition-colors hover:bg-gray-50 disabled:opacity-50"
+              >
+                Объединить фасад
+              </button>
+            )}
             <button
               type="button"
               onClick={() => setEditWallCorners(!editWallCorners)}
@@ -169,8 +225,28 @@ export function Canvas2D({
                 editWallCorners ? 'border-blue-700 bg-blue-50 text-blue-800' : 'border-gray-300 text-gray-700 hover:bg-gray-50'
               }`}
             >
-              Править маску
+              Править область
             </button>
+            {sceneMode === 'exterior' && exteriorMaskBase64 && wallImageSize && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (exteriorSplitLineActive) {
+                    setExteriorSplitLineActive(false)
+                    clearFacadeSplitDraft()
+                  } else {
+                    setExteriorSplitLineActive(true)
+                  }
+                }}
+                className={`rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
+                  exteriorSplitLineActive
+                    ? 'border-orange-600 bg-orange-50 text-orange-900'
+                    : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+                }`}
+              >
+                {exteriorSplitLineActive ? 'Отменить разрез' : 'Разрез по линии'}
+              </button>
+            )}
             {editWallCorners && sceneMode === 'exterior' && (
               <div className="flex items-center rounded-lg border border-blue-200 bg-blue-50 p-0.5">
                 <button
@@ -205,7 +281,7 @@ export function Canvas2D({
                 hideWallMasks ? 'border-blue-700 bg-blue-50 text-blue-800' : 'border-gray-300 text-gray-700 hover:bg-gray-50'
               }`}
             >
-              Скрыть маски
+              Скрыть области
             </button>
             {hasTextureLayer && (
               <div className="flex items-center gap-2">

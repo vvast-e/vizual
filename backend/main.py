@@ -15,6 +15,8 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+from typing import Optional
+
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
@@ -326,6 +328,7 @@ def _warp_texture_overlay_multi_regions_sync(
     regions: list[dict],
     polygon_full: list[list[float]] | None,
     opacity: float,
+    exterior_mask: np.ndarray | None = None,
 ) -> bytes:
     """Two-region gable warp: lower strip then upper strip of tiled texture."""
     if len(regions) != 2:
@@ -368,6 +371,9 @@ def _warp_texture_overlay_multi_regions_sync(
     if not np.any(mask > 0):
         mask = cv2.bitwise_or(region_masks[0], region_masks[1])
 
+    if exterior_mask is not None:
+        mask = cv2.bitwise_and(mask, exterior_mask)
+
     h0 = float(np.max(region_polys[0][:, 1]) - np.min(region_polys[0][:, 1]))
     h1 = float(np.max(region_polys[1][:, 1]) - np.min(region_polys[1][:, 1]))
     t_raw = h1 / (h0 + h1 + 1e-6)
@@ -404,6 +410,8 @@ def _warp_texture_overlay_multi_regions_sync(
     warped_alpha = warped_accum[:, :, 3].astype(np.float32) / 255.0
     out_alpha = (warped_alpha * alpha * 255.0).clip(0, 255).astype(np.uint8)
     warped_accum[:, :, 3] = out_alpha
+    if exterior_mask is not None:
+        warped_accum[:, :, 3] = cv2.bitwise_and(warped_accum[:, :, 3], exterior_mask)
 
     warped_bgra = cv2.cvtColor(warped_accum, cv2.COLOR_RGBA2BGRA)
     ok, buf = cv2.imencode(".png", warped_bgra)
@@ -468,7 +476,9 @@ def _warp_texture_overlay_sync(
     tiled = _tile_texture_rgba(tex, W, H, texture_scale)
 
     if regions is not None and isinstance(regions, list) and len(regions) == 2:
-        return _warp_texture_overlay_multi_regions_sync(tiled, W, H, regions, polygon, opacity)
+        return _warp_texture_overlay_multi_regions_sync(
+            tiled, W, H, regions, polygon, opacity, exterior_mask
+        )
     use_polygon = bool(polygon) and len(polygon) >= 3
     poly_pts: np.ndarray | None = None
     if use_polygon:
@@ -546,6 +556,8 @@ def _warp_texture_overlay_sync(
     warped_alpha = warped[:, :, 3].astype(np.float32) / 255.0
     out_alpha = (warped_alpha * alpha * 255.0).clip(0, 255).astype(np.uint8)
     warped[:, :, 3] = out_alpha
+    if exterior_mask is not None:
+        warped[:, :, 3] = cv2.bitwise_and(warped[:, :, 3], exterior_mask)
     try:
         mask_nonzero = int(np.count_nonzero(mask))
         alpha_nonzero = int(np.count_nonzero(out_alpha))
@@ -682,18 +694,49 @@ async def exterior_split(
     y2: float = Form(...),
     image_width: int = Form(...),
     image_height: int = Form(...),
+    target_wall_id: Optional[int] = Form(None),
+    walls_json: Optional[str] = Form(None),
 ):
     """Split exterior facade mask by user-drawn line. Returns new walls[]."""
     from exterior_pipeline import split_exterior_by_line
 
+    if target_wall_id is not None and not walls_json:
+        raise HTTPException(
+            status_code=400,
+            detail="walls_json is required when target_wall_id is set",
+        )
+
+    existing: list[dict] | None = None
+    if walls_json is not None:
+        try:
+            parsed = json.loads(walls_json)
+        except json.JSONDecodeError as e:
+            raise HTTPException(status_code=400, detail=f"invalid walls_json: {e}") from e
+        if not isinstance(parsed, list):
+            raise HTTPException(status_code=400, detail="walls_json must be a JSON array")
+        if len(parsed) == 0:
+            raise HTTPException(status_code=400, detail="walls_json must be non-empty")
+        if not all(isinstance(x, dict) for x in parsed):
+            raise HTTPException(status_code=400, detail="walls_json must contain only objects")
+        existing = [x for x in parsed if isinstance(x, dict)]
+
     try:
         walls = split_exterior_by_line(
-            mask_base64, float(x1), float(y1), float(x2), float(y2),
-            int(image_width), int(image_height),
+            mask_base64,
+            float(x1),
+            float(y1),
+            float(x2),
+            float(y2),
+            int(image_width),
+            int(image_height),
+            existing_walls=existing,
+            target_wall_id=target_wall_id,
         )
         return {"walls": walls}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @app.get("/api/health")

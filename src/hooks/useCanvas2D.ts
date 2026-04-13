@@ -6,6 +6,7 @@ import { useUIStore } from '@/store/useUIStore'
 import { useWallStore } from '@/store/useWallStore'
 import type { WallData } from '@/store/useWallStore'
 import { MAX_PHOTO_SIZE_BYTES, ALLOWED_IMAGE_TYPES } from '@/lib/constants'
+import { splitExteriorWalls } from '@/hooks/useWallDetection'
 
 export interface UseCanvas2DOptions {
   canvasRef: React.RefObject<HTMLCanvasElement | null>
@@ -53,6 +54,10 @@ export function useCanvas2D({
   const CORNER_HANDLE_DATA_KEY = 'cornerHandle'
   const exteriorMaskRef = useRef<FabricObject | null>(null)
   const EXTERIOR_MASK_DATA_KEY = 'isExteriorMask'
+  const facadeSplitP1SceneRef = useRef<{ x: number; y: number } | null>(null)
+  const facadeSplitImageP1Ref = useRef<{ ix: number; iy: number } | null>(null)
+  const facadeSplitTargetWallIdRef = useRef<number | null>(null)
+  const facadeSplitPreviewLineRef = useRef<Path | null>(null)
 
   const customMaskModeRef = useRef(customMaskMode)
   customMaskModeRef.current = customMaskMode
@@ -152,6 +157,99 @@ export function useCanvas2D({
         return
       }
 
+      const uiSplit = useUIStore.getState()
+      if (uiSplit.exteriorSplitLineActive && uiSplit.sceneMode === 'exterior') {
+        const bg = backgroundImageRef.current
+        const wallImageSize = useWallStore.getState().wallImageSize
+        const maskB64 = useWallStore.getState().exteriorMaskBase64
+        if (!bg || !wallImageSize || !maskB64) {
+          return
+        }
+        const left = (bg.left ?? 0) as number
+        const top = (bg.top ?? 0) as number
+        const bw = ((bg.width ?? 0) as number) * ((bg.scaleX ?? 1) as number)
+        const bh = ((bg.height ?? 0) as number) * ((bg.scaleY ?? 1) as number)
+        if (bw <= 0 || bh <= 0) {
+          return
+        }
+        const ix = Math.round(((scenePoint.x - left) / bw) * wallImageSize.width)
+        const iy = Math.round(((scenePoint.y - top) / bh) * wallImageSize.height)
+        const ixCl = Math.max(0, Math.min(wallImageSize.width - 1, ix))
+        const iyCl = Math.max(0, Math.min(wallImageSize.height - 1, iy))
+
+        if (!facadeSplitP1SceneRef.current) {
+          const point = new Point(scenePoint.x, scenePoint.y)
+          let targetWallId: number | null = null
+          for (let i = wallOverlaysRef.current.length - 1; i >= 0; i--) {
+            const obj = wallOverlaysRef.current[i]
+            if (
+              typeof (obj as unknown as { containsPoint?: (p: Point) => boolean }).containsPoint ===
+                'function' &&
+              (obj as unknown as { containsPoint: (p: Point) => boolean }).containsPoint(point)
+            ) {
+              const wallId = wallIdByObjectRef.current.get(obj)
+              if (wallId != null) {
+                targetWallId = wallId
+                break
+              }
+            }
+          }
+          if (targetWallId == null) {
+            const sel = useWallStore.getState().selectedWallId
+            if (sel != null) targetWallId = sel
+          }
+          if (targetWallId == null) {
+            console.warn('[facade-split] Кликните по стене, которую нужно разрезать (или выберите стену)')
+            return
+          }
+          facadeSplitTargetWallIdRef.current = targetWallId
+          facadeSplitP1SceneRef.current = { x: scenePoint.x, y: scenePoint.y }
+          facadeSplitImageP1Ref.current = { ix: ixCl, iy: iyCl }
+          canvas.requestRenderAll()
+          return
+        }
+        const p0 = facadeSplitImageP1Ref.current
+        if (!p0) {
+          facadeSplitP1SceneRef.current = null
+          return
+        }
+        if (facadeSplitPreviewLineRef.current) {
+          canvas.remove(facadeSplitPreviewLineRef.current)
+          facadeSplitPreviewLineRef.current = null
+        }
+        facadeSplitP1SceneRef.current = null
+        facadeSplitImageP1Ref.current = null
+        const splitWallId = facadeSplitTargetWallIdRef.current
+        facadeSplitTargetWallIdRef.current = null
+        useUIStore.getState().setExteriorSplitLineActive(false)
+        canvas.defaultCursor = 'default'
+
+        const wallsSnapshot = useWallStore.getState().walls
+        const splitTarget =
+          splitWallId != null && wallsSnapshot.length > 0
+            ? { targetWallId: splitWallId, walls: wallsSnapshot }
+            : undefined
+
+        void splitExteriorWalls(
+          maskB64,
+          p0.ix,
+          p0.iy,
+          ixCl,
+          iyCl,
+          wallImageSize.width,
+          wallImageSize.height,
+          splitTarget
+        )
+          .then((res) => {
+            useWallStore.getState().setWalls(res.walls, wallImageSize, false)
+          })
+          .catch((err) => {
+            console.error('[facade-split]', err)
+          })
+        canvas.requestRenderAll()
+        return
+      }
+
       const target = (opt as unknown as { target?: FabricObject | null }).target
       const data = target ? (target as unknown as { data?: Record<string, unknown> }).data : undefined
       if (data && typeof data[WALL_BUTTON_DATA_KEY] === 'number') {
@@ -195,6 +293,30 @@ export function useCanvas2D({
     canvas.on('mouse:move', (opt) => {
       const tool = maskToolRef.current
       const scenePoint = canvas.getScenePoint(opt.e as MouseEvent)
+
+      const uiMove = useUIStore.getState()
+      if (
+        uiMove.exteriorSplitLineActive &&
+        uiMove.sceneMode === 'exterior' &&
+        facadeSplitP1SceneRef.current
+      ) {
+        const p1 = facadeSplitP1SceneRef.current
+        if (facadeSplitPreviewLineRef.current) {
+          canvas.remove(facadeSplitPreviewLineRef.current)
+        }
+        const d = `M ${p1.x} ${p1.y} L ${scenePoint.x} ${scenePoint.y}`
+        const preview = new Path(d, {
+          stroke: '#f97316',
+          strokeWidth: 2,
+          selectable: false,
+          evented: false,
+          strokeDashArray: [8, 4],
+        })
+        canvas.add(preview)
+        facadeSplitPreviewLineRef.current = preview
+        canvas.requestRenderAll()
+        return
+      }
 
       if (tool === 'rect' && rectStartRef.current) {
         const center = rectStartRef.current
@@ -409,6 +531,13 @@ export function useCanvas2D({
     backgroundImageRef.current = null
     textureLayersRef.current = {}
     exteriorMaskRef.current = null
+    facadeSplitP1SceneRef.current = null
+    facadeSplitImageP1Ref.current = null
+    facadeSplitTargetWallIdRef.current = null
+    if (facadeSplitPreviewLineRef.current) {
+      canvas.remove(facadeSplitPreviewLineRef.current)
+      facadeSplitPreviewLineRef.current = null
+    }
     wallOverlaysRef.current = []
     wallDebugShapesRef.current = []
     setHasTextureLayer(false)
@@ -776,6 +905,29 @@ export function useCanvas2D({
     [containerWidth, containerHeight, textureScale, getBackgroundTransform]
   )
 
+  const applyTextureToAllWalls = useCallback(
+    async (textureUrl: string) => {
+      const { walls, wallImageSize, setWallTexture } = useWallStore.getState()
+      if (!wallImageSize || walls.length === 0) return
+
+      const failed: number[] = []
+      for (const wall of walls) {
+        if (!wall.corners || wall.corners.length < 3) continue
+        setWallTexture(wall.id, textureUrl)
+        try {
+          await applyTextureToWall(textureUrl, wall.corners, wallImageSize, wall.id)
+        } catch {
+          setWallTexture(wall.id, null)
+          failed.push(wall.id)
+        }
+      }
+      if (failed.length > 0) {
+        throw new Error(`Не удалось применить профиль к областям: ${failed.join(', ')}`)
+      }
+    },
+    [applyTextureToWall]
+  )
+
   const highlightSelectedWall = useCallback((selectedId: number | null) => {
     const canvas = canvasInstanceRef.current
     if (!canvas) return
@@ -833,6 +985,13 @@ export function useCanvas2D({
       })
       canvas.add(quadOutline)
       cornerHandlesRef.current.push(quadOutline)
+      const updatePerspectiveOutline = (corners: [number, number][]) => {
+        if (corners.length !== 4) return
+        const nextPts = corners.map(([cx, cy]) => ({ x: bounds.left + cx * scaleX, y: bounds.top + cy * scaleY }))
+        const nextD = `M ${nextPts[0].x} ${nextPts[0].y} L ${nextPts[1].x} ${nextPts[1].y} L ${nextPts[2].x} ${nextPts[2].y} L ${nextPts[3].x} ${nextPts[3].y} Z`
+        const nextPath = new Path(nextD, { selectable: false, evented: false }).path
+        quadOutline.set({ path: nextPath })
+      }
 
       wall.corners.forEach(([ix, iy], idx) => {
         const x = bounds.left + ix * scaleX
@@ -870,7 +1029,9 @@ export function useCanvas2D({
           const newIx = Math.round((hx - bounds.left) / scaleX)
           const newIy = Math.round((hy - bounds.top) / scaleY)
           const next = currentWall.corners.map((c, i) => (i === idx ? ([newIx, newIy] as [number, number]) : c))
+          updatePerspectiveOutline(next)
           updateWallCorners(selectedWallId, next)
+          canvas.requestRenderAll()
         })
 
         canvas.add(handle)
@@ -954,6 +1115,18 @@ export function useCanvas2D({
     canvas?.requestRenderAll()
   }, [])
 
+  const clearFacadeSplitDraft = useCallback(() => {
+    const canvas = canvasInstanceRef.current
+    if (facadeSplitPreviewLineRef.current && canvas) {
+      canvas.remove(facadeSplitPreviewLineRef.current)
+      facadeSplitPreviewLineRef.current = null
+    }
+    facadeSplitP1SceneRef.current = null
+    facadeSplitImageP1Ref.current = null
+    facadeSplitTargetWallIdRef.current = null
+    canvas?.requestRenderAll()
+  }, [])
+
   return {
     canvasInstanceRef,
     isReady,
@@ -971,10 +1144,12 @@ export function useCanvas2D({
     setExteriorMaskOverlay,
     applyTexture,
     applyTextureToWall,
+    applyTextureToAllWalls,
     highlightSelectedWall,
     syncCornerHandles,
     finishLasso,
     clearMaskToolState,
+    clearFacadeSplitDraft,
     textureScale,
     setTextureScale,
     hasTextureLayer,

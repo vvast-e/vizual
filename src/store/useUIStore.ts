@@ -22,6 +22,8 @@ interface UIState {
   sceneMode: SceneMode
   /** Запущен ли обучающий тур */
   tourActive: boolean
+  /** Режим двух кликов: линия разреза фасада (экстерьер) */
+  exteriorSplitLineActive: boolean
   setMaterialCatalogOpen: (open: boolean) => void
   setExportModalOpen: (open: boolean) => void
   setActiveToolbarPanel: (panel: string | null) => void
@@ -32,6 +34,7 @@ interface UIState {
   setSceneMode: (mode: SceneMode) => void
   toggleWallVisibility: (wallId: number) => void
   setTourActive: (v: boolean) => void
+  setExteriorSplitLineActive: (v: boolean) => void
 }
 
 export const useUIStore = create<UIState>((set) => ({
@@ -45,6 +48,7 @@ export const useUIStore = create<UIState>((set) => ({
   wallVisibility: {},
   sceneMode: 'interior',
   tourActive: false,
+  exteriorSplitLineActive: false,
   setMaterialCatalogOpen: (materialCatalogOpen) => set({ materialCatalogOpen }),
   setExportModalOpen: (exportModalOpen) => set({ exportModalOpen }),
   setActiveToolbarPanel: (activeToolbarPanel) => set({ activeToolbarPanel }),
@@ -61,4 +65,5 @@ export const useUIStore = create<UIState>((set) => ({
       },
     })),
   setTourActive: (tourActive) => set({ tourActive }),
+  setExteriorSplitLineActive: (exteriorSplitLineActive) => set({ exteriorSplitLineActive }),
 }))

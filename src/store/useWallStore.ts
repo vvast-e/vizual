@@ -31,7 +31,7 @@ interface WallState {
   wallTextures: Record<number, string | null>
   /** Base64 PNG маски фасада (wall_minus_holes) для ручного split */
   exteriorMaskBase64: string | null
-  setWalls: (walls: WallData[], imageSize: WallImageSize | null) => void
+  setWalls: (walls: WallData[], imageSize: WallImageSize | null, resetTextures?: boolean) => void
   setExteriorMaskBase64: (mask: string | null) => void
   selectWall: (id: number | null) => void
   setDetecting: (v: boolean) => void
@@ -52,12 +52,16 @@ export const useWallStore = create<WallState>((set) => ({
   isDetecting: false,
   wallTextures: {},
   exteriorMaskBase64: null,
-  setWalls: (walls, wallImageSize) =>
+  setWalls: (walls, wallImageSize, resetTextures = true) =>
     set((s) => ({
       walls,
       wallImageSize,
       selectedWallId: null,
-      wallTextures: {},
+      wallTextures: resetTextures
+        ? {}
+        : Object.fromEntries(
+            Object.entries(s.wallTextures).filter(([id]) => walls.some((w) => w.id === Number(id)))
+          ),
       exteriorMaskBase64: wallImageSize == null ? null : s.exteriorMaskBase64,
     })),
   setExteriorMaskBase64: (exteriorMaskBase64) => set({ exteriorMaskBase64 }),
