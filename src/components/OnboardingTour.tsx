@@ -108,6 +108,7 @@ export function OnboardingTour() {
       run={tourActive}
       continuous
       scrollToFirstStep
+      // @ts-expect-error React Joyride v2/v3 type mismatch in callback prop
       callback={handleJoyrideEvent}
       styles={{
         buttonPrimary: {
