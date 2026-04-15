@@ -8,6 +8,7 @@ import io
 import hashlib
 import os
 import time
+import json
 
 import cv2
 import httpx
@@ -17,9 +18,14 @@ from facade_geometry import split_gable_roof_polygon
 
 GDINO_URL = os.getenv("EXTERIOR_GDINO_URL", "http://127.0.0.1:8001/gdino")
 SAM_URL = os.getenv("EXTERIOR_SAM_URL", "http://127.0.0.1:8001/sam")
+SAM_BATCH_URL = os.getenv("EXTERIOR_SAM_BATCH_URL", "http://127.0.0.1:8001/sam_batch")
 TIMEOUT_S = int(os.getenv("EXTERIOR_TIMEOUT_MS", "30000")) / 1000.0
 SCORE_THRESH_BUILDING = float(os.getenv("EXTERIOR_SCORE_THRESH_BUILDING", "0.3"))
 SCORE_THRESH_OPENINGS = float(os.getenv("EXTERIOR_SCORE_THRESH_OPENINGS", "0.22"))
+EXTERIOR_SAM_BATCH_ENABLE = os.getenv("EXTERIOR_SAM_BATCH_ENABLE", "1") in {"1", "true", "TRUE", "yes", "YES"}
+EXTERIOR_SAM_BATCH_SIZE = max(1, int(os.getenv("EXTERIOR_SAM_BATCH_SIZE", "8")))
+EXTERIOR_OPENINGS_NMS_IOU = float(os.getenv("EXTERIOR_OPENINGS_NMS_IOU", "0.5"))
+EXTERIOR_OPENINGS_MIN_AREA_PX = int(os.getenv("EXTERIOR_OPENINGS_MIN_AREA_PX", "200"))
 
 # Debug output for investigating mask->front rendering.
 # Saves intermediate PNGs + prints summary to stdout.
@@ -122,6 +128,69 @@ async def sam_mask_from_bbox(image_bytes: bytes, bbox: list[float]) -> np.ndarra
     if mask is None:
         raise ValueError("Failed to decode SAM mask PNG")
     return mask
+
+
+async def sam_masks_from_bboxes_batch(image_bytes: bytes, bboxes: list[list[float]]) -> list[np.ndarray]:
+    """Call SAM batch endpoint and return masks in bbox order."""
+    if not bboxes:
+        return []
+    async with httpx.AsyncClient(timeout=TIMEOUT_S) as client:
+        resp = await client.post(
+            SAM_BATCH_URL,
+            files={"image": ("photo.jpg", image_bytes, "image/jpeg")},
+            data={"bboxes": json.dumps(bboxes), "multimask_output": "false"},
+        )
+    resp.raise_for_status()
+    data = resp.json()
+    masks_b64 = data.get("masks", [])
+    if not isinstance(masks_b64, list):
+        raise ValueError("Invalid sam_batch response: masks must be list")
+    out: list[np.ndarray] = []
+    for i, mb64 in enumerate(masks_b64):
+        arr = np.frombuffer(base64.b64decode(str(mb64)), dtype=np.uint8)
+        mask = cv2.imdecode(arr, cv2.IMREAD_GRAYSCALE)
+        if mask is None:
+            raise ValueError(f"Failed to decode SAM batch mask at index {i}")
+        out.append(mask)
+    return out
+
+
+def _bbox_iou(a: list[float], b: list[float]) -> float:
+    ax1, ay1, ax2, ay2 = a
+    bx1, by1, bx2, by2 = b
+    ix1 = max(ax1, bx1)
+    iy1 = max(ay1, by1)
+    ix2 = min(ax2, bx2)
+    iy2 = min(ay2, by2)
+    iw = max(0.0, ix2 - ix1)
+    ih = max(0.0, iy2 - iy1)
+    inter = iw * ih
+    area_a = max(0.0, ax2 - ax1) * max(0.0, ay2 - ay1)
+    area_b = max(0.0, bx2 - bx1) * max(0.0, by2 - by1)
+    den = area_a + area_b - inter
+    if den <= 1e-6:
+        return 0.0
+    return float(inter / den)
+
+
+def _filter_opening_bboxes(bboxes: list[list[float]]) -> list[list[float]]:
+    """Remove tiny and highly-overlapping opening boxes before SAM."""
+    if not bboxes:
+        return []
+    # 1) area filter
+    filtered = [b for b in bboxes if _bbox_area(b) >= float(EXTERIOR_OPENINGS_MIN_AREA_PX)]
+    if not filtered:
+        return []
+    # 2) greedy NMS by area desc (proxy for stability without per-box score)
+    ordered = sorted(filtered, key=_bbox_area, reverse=True)
+    kept: list[list[float]] = []
+    for b in ordered:
+        if any(_bbox_iou(b, k) >= EXTERIOR_OPENINGS_NMS_IOU for k in kept):
+            continue
+        kept.append(b)
+    # keep deterministic left-to-right order for downstream debug
+    kept.sort(key=lambda x: (x[0], x[1], x[2], x[3]))
+    return kept
 
 
 def postprocess_masks(
@@ -2316,14 +2385,32 @@ async def run_exterior_pipeline(image_bytes: bytes, image_width: int, image_heig
 
     openings = await detect_openings_bboxes(image_bytes, building_bbox)
     holes_mask = np.zeros((image_height, image_width), dtype=np.uint8)
-    all_opening_bboxes = openings["windows"] + openings["doors"]
-    for ob in all_opening_bboxes:
+    all_opening_bboxes_raw = openings["windows"] + openings["doors"]
+    all_opening_bboxes = _filter_opening_bboxes(all_opening_bboxes_raw)
+    sam_batch_chunks = 0
+    sam_batch_total_ms = 0.0
+    sam_fallback_used = False
+    if EXTERIOR_SAM_BATCH_ENABLE and all_opening_bboxes:
         try:
-            opening_mask = await sam_mask_from_bbox(image_bytes, ob)
-            if opening_mask.shape == holes_mask.shape:
-                holes_mask = cv2.bitwise_or(holes_mask, opening_mask)
+            for i in range(0, len(all_opening_bboxes), EXTERIOR_SAM_BATCH_SIZE):
+                chunk = all_opening_bboxes[i : i + EXTERIOR_SAM_BATCH_SIZE]
+                t0 = time.perf_counter()
+                chunk_masks = await sam_masks_from_bboxes_batch(image_bytes, chunk)
+                sam_batch_total_ms += (time.perf_counter() - t0) * 1000.0
+                sam_batch_chunks += 1
+                for opening_mask in chunk_masks:
+                    if opening_mask.shape == holes_mask.shape:
+                        holes_mask = cv2.bitwise_or(holes_mask, opening_mask)
         except Exception:
-            continue
+            sam_fallback_used = True
+    if (not EXTERIOR_SAM_BATCH_ENABLE or sam_fallback_used) and all_opening_bboxes:
+        for ob in all_opening_bboxes:
+            try:
+                opening_mask = await sam_mask_from_bbox(image_bytes, ob)
+                if opening_mask.shape == holes_mask.shape:
+                    holes_mask = cv2.bitwise_or(holes_mask, opening_mask)
+            except Exception:
+                continue
     if holes_mask.shape != (image_height, image_width):
         holes_mask = cv2.resize(holes_mask, (image_width, image_height), interpolation=cv2.INTER_NEAREST)
     wall_minus_holes = postprocess_masks(wall_mask, holes_mask)
@@ -2473,6 +2560,13 @@ async def run_exterior_pipeline(image_bytes: bytes, image_width: int, image_heig
                     "split_arbiter": split_arbiter,
                     "split_mask_used": "wall_for_split",
                     "contour_corner_debug": corner_dbg,
+                    "openings_bboxes_raw_count": len(all_opening_bboxes_raw),
+                    "openings_bboxes_filtered_count": len(all_opening_bboxes),
+                    "sam_batch_enable": EXTERIOR_SAM_BATCH_ENABLE,
+                    "sam_batch_size": EXTERIOR_SAM_BATCH_SIZE,
+                    "sam_batch_chunks": sam_batch_chunks,
+                    "sam_batch_total_ms": round(float(sam_batch_total_ms), 2),
+                    "sam_fallback_used": sam_fallback_used,
                     "profile_denoise_debug": {
                         "bottom_vertices": len((pb_dbg or {}).get("piecewise_profile") or []),
                         "top_vertices": len((pt_dbg or {}).get("piecewise_profile") or []),

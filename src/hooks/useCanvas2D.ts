@@ -140,10 +140,20 @@ export function useCanvas2D({
           canvas.add(closeLine)
           customMaskPreviewRef.current.push(closeLine)
 
-          const corners: [number, number][] = pts.map((p) => [p.x, p.y] as [number, number])
-          const cb = onCustomMaskCompleteRef.current
-          if (cb) {
-            cb(corners)
+          const bounds = getBackgroundBounds()
+          const wallImageSize = useWallStore.getState().wallImageSize
+          if (bounds && wallImageSize && bounds.width > 0 && bounds.height > 0) {
+            const corners: [number, number][] = pts.map((p) => {
+              const ix = Math.round(((p.x - bounds.left) / bounds.width) * wallImageSize.width)
+              const iy = Math.round(((p.y - bounds.top) / bounds.height) * wallImageSize.height)
+              const ixCl = Math.max(0, Math.min(wallImageSize.width - 1, ix))
+              const iyCl = Math.max(0, Math.min(wallImageSize.height - 1, iy))
+              return [ixCl, iyCl] as [number, number]
+            })
+            const cb = onCustomMaskCompleteRef.current
+            if (cb) {
+              cb(corners)
+            }
           }
 
           for (const obj of customMaskPreviewRef.current) {
@@ -736,6 +746,8 @@ export function useCanvas2D({
           wallDebugShapesRef.current.push(shape)
         }
 
+        if (!isVisible) continue
+
         const cx = bounds.left + wall.center[0] * scaleX
         const cy = bounds.top + wall.center[1] * scaleY
         const btn = new Rect({
@@ -841,7 +853,7 @@ export function useCanvas2D({
           regions,
           imageSize: _wallImageSize,
           textureScale,
-          opacity: 0.85,
+          opacity: 1,
           maskBase64,
         })
 

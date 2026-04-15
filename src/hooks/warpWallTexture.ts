@@ -20,7 +20,7 @@ export async function warpWallTexture({
   regions,
   imageSize,
   textureScale,
-  opacity = 0.85,
+  opacity = 1,
   maskBase64,
 }: WarpWallTextureArgs): Promise<Blob> {
   const texRes = await fetch(textureUrl)
@@ -42,7 +42,8 @@ export async function warpWallTexture({
   form.append('image_width', String(imageSize.width))
   form.append('image_height', String(imageSize.height))
   form.append('texture_scale', String(textureScale))
-  form.append('opacity', String(opacity))
+  void opacity
+  form.append('opacity', '1')
 
   const res = await fetch('/api/warp-wall-texture', { method: 'POST', body: form })
   if (!res.ok) {

@@ -2,7 +2,8 @@ import { useNavigate } from 'react-router-dom'
 import { useUIStore } from '@/store/useUIStore'
 import { useVisualizerStore } from '@/store/useVisualizerStore'
 import { useWallStore } from '@/store/useWallStore'
-import { downloadDataUrl } from '@/lib/export-utils'
+import { useMaterialStore } from '@/store/useMaterialStore'
+import { buildExportImageDataUrl, downloadDataUrl } from '@/lib/export-utils'
 import { Home, Building2, Download, RotateCcw, HelpCircle } from 'lucide-react'
 
 export function EditorHeader() {
@@ -10,12 +11,47 @@ export function EditorHeader() {
   const sceneMode = useUIStore((s) => s.sceneMode)
   const setSceneMode = useUIStore((s) => s.setSceneMode)
   const setTourActive = useUIStore((s) => s.setTourActive)
+  const selectedMaterial = useMaterialStore((s) => s.selectedMaterial)
+  const selectedColor = useMaterialStore((s) => s.selectedColor)
 
-  const handleExport = () => {
+  const handleExport = async () => {
     const canvas = document.querySelector('canvas') as HTMLCanvasElement | null
     if (!canvas) return
-    const dataUrl = canvas.toDataURL('image/png')
-    downloadDataUrl(dataUrl, `vizual-${Date.now()}.png`)
+    const ui = useUIStore.getState()
+    const prevHide = ui.hideWallMasks
+    const prevEditWallCorners = ui.editWallCorners
+    const prevWallVisibility = ui.wallVisibility
+    const walls = useWallStore.getState().walls
+    try {
+      if (!prevHide) {
+        ui.setHideWallMasks(true)
+      }
+      if (prevEditWallCorners) {
+        ui.setEditWallCorners(false)
+      }
+      if (walls.length > 0) {
+        const hiddenVisibility = { ...prevWallVisibility }
+        for (const wall of walls) {
+          hiddenVisibility[wall.id] = false
+        }
+        useUIStore.setState({ wallVisibility: hiddenVisibility })
+      }
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()))
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()))
+      const dataUrl = buildExportImageDataUrl(canvas, {
+        material: selectedMaterial,
+        color: selectedColor,
+      })
+      downloadDataUrl(dataUrl, `vizual-${Date.now()}.png`)
+    } finally {
+      useUIStore.setState({ wallVisibility: prevWallVisibility })
+      if (prevEditWallCorners) {
+        ui.setEditWallCorners(true)
+      }
+      if (!prevHide) {
+        ui.setHideWallMasks(false)
+      }
+    }
   }
 
   const handleReset = () => {

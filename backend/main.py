@@ -753,7 +753,7 @@ async def warp_wall_texture(
     image_width: int = Form(...),
     image_height: int = Form(...),
     texture_scale: float = Form(0.25),
-    opacity: float = Form(0.85),
+    opacity: float = Form(1.0),
     mask_base64: str | None = Form(None),
 ):
     try:

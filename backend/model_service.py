@@ -7,6 +7,7 @@ Models loaded via transformers directly (no ONNX export needed).
 import io
 import json
 import os
+import base64
 from contextlib import asynccontextmanager
 
 _BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -156,3 +157,59 @@ async def sam_segment(
         raise HTTPException(500, "Failed to encode mask PNG")
 
     return Response(content=buf.tobytes(), media_type="image/png")
+
+
+@app.post("/sam_batch")
+async def sam_segment_batch(
+    image: UploadFile = File(...),
+    bboxes: str = Form(...),
+    multimask_output: bool = Form(False),
+):
+    """Return masks for a batch of bbox prompts."""
+    if sam_model is None or sam_processor is None:
+        raise HTTPException(503, "SAM not loaded yet")
+
+    image_bytes = await image.read()
+    pil_image = _read_image_pil(image_bytes)
+
+    try:
+        parsed = json.loads(bboxes)
+    except json.JSONDecodeError as e:
+        raise HTTPException(400, f"invalid bboxes json: {e}") from e
+    if not isinstance(parsed, list) or len(parsed) == 0:
+        raise HTTPException(400, "bboxes must be a non-empty JSON array")
+    if not all(isinstance(b, list) and len(b) == 4 for b in parsed):
+        raise HTTPException(400, "each bbox must be [x1, y1, x2, y2]")
+
+    input_boxes = [[[
+        float(b[0]), float(b[1]), float(b[2]), float(b[3])
+    ] for b in parsed]]
+
+    inputs = sam_processor(
+        pil_image,
+        input_boxes=input_boxes,
+        return_tensors="pt",
+    )
+    outputs = sam_model(**inputs, multimask_output=bool(multimask_output))
+
+    masks = sam_processor.image_processor.post_process_masks(
+        outputs.pred_masks.detach().cpu(),
+        inputs["original_sizes"].detach().cpu(),
+        inputs["reshaped_input_sizes"].detach().cpu(),
+    )
+
+    iou_scores = outputs.iou_scores.detach().cpu().numpy()[0]
+    all_masks = masks[0]
+    masks_b64: list[str] = []
+    scores: list[float] = []
+
+    for i in range(all_masks.shape[0]):
+        best_idx = int(np.argmax(iou_scores[i]))
+        mask_np = all_masks[i, best_idx].numpy().astype(np.uint8) * 255
+        ok, buf = cv2.imencode(".png", mask_np)
+        if not ok:
+            raise HTTPException(500, f"failed to encode mask png for bbox index {i}")
+        masks_b64.append(base64.b64encode(buf.tobytes()).decode("ascii"))
+        scores.append(float(iou_scores[i, best_idx]))
+
+    return {"masks": masks_b64, "scores": scores, "count": len(masks_b64)}
