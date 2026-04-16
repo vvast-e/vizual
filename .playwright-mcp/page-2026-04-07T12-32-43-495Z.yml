@@ -1,0 +1,416 @@
+- generic [active] [ref=e1]:
+  - generic:
+    - generic:
+      - link "Перейти к основному контенту" [ref=e2] [cursor=pointer]
+      - link "Справка по использованию специальных возможностей" [ref=e3] [cursor=pointer]:
+        - /url: https://support.google.com/websearch/answer/181196?hl=ru
+      - link "Оставить отзыв о специальных возможностях" [ref=e4] [cursor=pointer]
+  - generic [ref=e9]:
+    - search [ref=e10]:
+      - generic [ref=e12]:
+        - link "Главная страница Google" [ref=e14] [cursor=pointer]:
+          - /url: https://www.google.com/webhp?hl=ru&sa=X&ved=0ahUKEwiZ4afU39uTAxXlIxAIHf1SNRwQPAgJ
+          - img [ref=e15]
+        - generic [ref=e22]:
+          - generic [ref=e23]:
+            - combobox "Найти" [ref=e26]: InstaColor image colorization model huggingface github InstaColor image colorization model huggingface github
+            - generic [ref=e27]:
+              - button "Очистить" [ref=e29] [cursor=pointer]:
+                - img [ref=e31]
+              - generic [ref=e34]:
+                - button "Экранная клавиатура" [ref=e35] [cursor=pointer]:
+                  - img [ref=e37]
+                - button "Голосовой поиск" [ref=e39] [cursor=pointer]:
+                  - img [ref=e40]
+                - button "Поиск по картинке" [ref=e42] [cursor=pointer]:
+                  - img [ref=e43]
+          - button "Поиск" [ref=e45] [cursor=pointer]:
+            - img [ref=e48]
+    - generic [ref=e50]:
+      - button "Настройки" [ref=e52] [cursor=pointer]:
+        - img [ref=e55]
+      - generic [ref=e58]:
+        - button "Приложения Google" [ref=e60] [cursor=pointer]:
+          - img [ref=e61]
+        - link "Войти" [ref=e65] [cursor=pointer]:
+          - /url: https://accounts.google.com/ServiceLogin?hl=ru&passive=true&continue=https://www.google.com/search%3Fq%3DInstaColor%2Bimage%2Bcolorization%2Bmodel%2Bhuggingface%2Bgithub&ec=futura_srp_og_si_72236_p
+  - generic [ref=e67]:
+    - navigation [ref=e73]:
+      - generic [ref=e77]:
+        - list [ref=e78]:
+          - listitem [ref=e79]:
+            - link "Режим ИИ" [ref=e82] [cursor=pointer]:
+              - /url: /search?q=InstaColor+image+colorization+model+huggingface+github&sca_esv=5d5eb154281590ac&udm=50&fbs=ADc_l-ZNYiECt50Q2Di4dBBBAYOL5VvBLfqib0fcrHkoXQatSbIDceDitUN2yBmRBnPF3dLZFvzxdUCyeyFgb8g-C7QnWWyqKrsvydZVFihJH8-paNLU3s2KIzlmyPCEKt_qKyItBExdb157ipDm0KJWFbjKIQTEQma0h1wkSM6O3Y8P3PFcgsurT7qLEGvDUtzvNjxS--NOZIq3gatjhavMGkooUuY3jWwkAn60NF1apvVIK1EHTI56niM3lFtCX_Mgte7-tWd_y8haL2Fh6GvGyEbghhIWTQ&aep=1&ntc=1&sa=X&ved=2ahUKEwiZ4afU39uTAxXlIxAIHf1SNRwQ2J8OegQIERAE
+              - generic [ref=e85]: Режим ИИ
+          - listitem [ref=e86]:
+            - link "Все" [disabled] [ref=e87]:
+              - generic [ref=e89]: Все
+          - listitem [ref=e90]:
+            - link "Картинки" [ref=e91] [cursor=pointer]:
+              - /url: /search?sca_esv=5d5eb154281590ac&udm=2&fbs=ADc_l-ZNYiECt50Q2Di4dBBBAYOL5VvBLfqib0fcrHkoXQatSbIDceDitUN2yBmRBnPF3dLZFvzxdUCyeyFgb8g-C7QnWWyqKrsvydZVFihJH8-paNLU3s2KIzlmyPCEKt_qKyItBExdb157ipDm0KJWFbjKIQTEQma0h1wkSM6O3Y8P3PFcgsurT7qLEGvDUtzvNjxS--NOZIq3gatjhavMGkooUuY3jWwkAn60NF1apvVIK1EHTI56niM3lFtCX_Mgte7-tWd_y8haL2Fh6GvGyEbghhIWTQ&q=InstaColor+image+colorization+model+huggingface+github&sa=X&ved=2ahUKEwiZ4afU39uTAxXlIxAIHf1SNRwQtKgLegQIEhAB
+              - generic [ref=e93]: Картинки
+          - listitem [ref=e94]:
+            - link "Видео" [ref=e95] [cursor=pointer]:
+              - /url: /search?sca_esv=5d5eb154281590ac&udm=7&fbs=ADc_l-ZNYiECt50Q2Di4dBBBAYOL5VvBLfqib0fcrHkoXQatSbIDceDitUN2yBmRBnPF3dLZFvzxdUCyeyFgb8g-C7QnWWyqKrsvydZVFihJH8-paNLU3s2KIzlmyPCEKt_qKyItBExdb157ipDm0KJWFbjKIQTEQma0h1wkSM6O3Y8P3PFcgsurT7qLEGvDUtzvNjxS--NOZIq3gatjhavMGkooUuY3jWwkAn60NF1apvVIK1EHTI56niM3lFtCX_Mgte7-tWd_y8haL2Fh6GvGyEbghhIWTQ&q=InstaColor+image+colorization+model+huggingface+github&sa=X&ved=2ahUKEwiZ4afU39uTAxXlIxAIHf1SNRwQtKgLegQIFhAB
+              - generic [ref=e97]: Видео
+          - listitem [ref=e98]:
+            - link "Покупки" [ref=e99] [cursor=pointer]:
+              - /url: /search?sca_esv=5d5eb154281590ac&udm=28&fbs=ADc_l-ZNYiECt50Q2Di4dBBBAYOL5VvBLfqib0fcrHkoXQatSbIDceDitUN2yBmRBnPF3dLZFvzxdUCyeyFgb8g-C7QnWWyqKrsvydZVFihJH8-paNLU3s2KIzlmyPCEKt_qKyItBExdb157ipDm0KJWFbjKIQTEQma0h1wkSM6O3Y8P3PFcgsurT7qLEGvDUtzvNjxS--NOZIq3gatjhavMGkooUuY3jWwkAn60NF1apvVIK1EHTI56niM3lFtCX_Mgte7-tWd_y8haL2Fh6GvGyEbghhIWTQ&q=InstaColor+image+colorization+model+huggingface+github&ved=1t:220175&ictx=111
+              - generic [ref=e101]: Покупки
+          - listitem [ref=e102]:
+            - link "Короткие видео" [ref=e103] [cursor=pointer]:
+              - /url: /search?sca_esv=5d5eb154281590ac&udm=39&fbs=ADc_l-ZNYiECt50Q2Di4dBBBAYOL5VvBLfqib0fcrHkoXQatSbIDceDitUN2yBmRBnPF3dLZFvzxdUCyeyFgb8g-C7QnWWyqKrsvydZVFihJH8-paNLU3s2KIzlmyPCEKt_qKyItBExdb157ipDm0KJWFbjKIQTEQma0h1wkSM6O3Y8P3PFcgsurT7qLEGvDUtzvNjxS--NOZIq3gatjhavMGkooUuY3jWwkAn60NF1apvVIK1EHTI56niM3lFtCX_Mgte7-tWd_y8haL2Fh6GvGyEbghhIWTQ&q=InstaColor+image+colorization+model+huggingface+github&sa=X&ved=2ahUKEwiZ4afU39uTAxXlIxAIHf1SNRwQs6gLegQIFRAB
+              - generic [ref=e105]: Короткие видео
+          - listitem [ref=e106]:
+            - link "Новости" [ref=e107] [cursor=pointer]:
+              - /url: /search?sca_esv=5d5eb154281590ac&q=InstaColor+image+colorization+model+huggingface+github&tbm=nws&source=lnms&fbs=ADc_l-ZNYiECt50Q2Di4dBBBAYOL5VvBLfqib0fcrHkoXQatSbIDceDitUN2yBmRBnPF3dLZFvzxdUCyeyFgb8g-C7QnWWyqKrsvydZVFihJH8-paNLU3s2KIzlmyPCEKt_qKyItBExdb157ipDm0KJWFbjKIQTEQma0h1wkSM6O3Y8P3PFcgsurT7qLEGvDUtzvNjxS--NOZIq3gatjhavMGkooUuY3jWwkAn60NF1apvVIK1EHTI56niM3lFtCX_Mgte7-tWd_y8haL2Fh6GvGyEbghhIWTQ&sa=X&ved=2ahUKEwiZ4afU39uTAxXlIxAIHf1SNRwQ0pQJegQIFxAB
+              - generic [ref=e109]: Новости
+          - listitem [ref=e110]:
+            - button "Ещё фильтры" [ref=e111] [cursor=pointer]:
+              - generic "Ещё фильтры" [ref=e112]:
+                - generic [ref=e113]:
+                  - generic [ref=e114]: Ещё
+                  - img [ref=e116]
+        - button "Инструменты" [ref=e119] [cursor=pointer]:
+          - generic [ref=e121]:
+            - generic [ref=e122]: Инструменты
+            - img [ref=e124]
+    - heading "Результаты поиска" [level=1] [ref=e126]
+    - main [ref=e132]:
+      - generic [ref=e136]:
+        - generic [ref=e139]:
+          - heading "Web results" [level=2] [ref=e140]
+          - generic [ref=e141]:
+            - generic [ref=e144]:
+              - link "Diffusion Pix2Pix colorizer model built using Hugging ... GitHub https://github.com › TassaraR" [ref=e146] [cursor=pointer]:
+                - /url: https://github.com/TassaraR/colorize-diffusers
+                - heading "Diffusion Pix2Pix colorizer model built using Hugging ..." [level=3] [ref=e147]
+                - generic [ref=e152]:
+                  - generic [ref=e154]: GitHub
+                  - generic [ref=e156]: https://github.com › TassaraR
+              - generic [ref=e157]:
+                - generic [ref=e158]: ·
+                - link "Перевести эту страницу" [ref=e159] [cursor=pointer]:
+                  - /url: https://github.com/TassaraR/colorize-diffusers
+              - button "Об этом результате" [ref=e160] [cursor=pointer]:
+                - img [ref=e163]
+            - generic [ref=e167]:
+              - text: Based on a grayscale
+              - emphasis [ref=e168]: image
+              - text: we try to predict its colors. Usually diffusion
+              - emphasis [ref=e169]: models
+              - text: are composed of multiple components and
+              - emphasis [ref=e170]: models
+              - text: .
+        - generic [ref=e174]:
+          - generic [ref=e177]:
+            - link "nick8592/text-guided-image-colorization GitHub https://github.com › nick8592" [ref=e179] [cursor=pointer]:
+              - /url: https://github.com/nick8592/text-guided-image-colorization
+              - heading "nick8592/text-guided-image-colorization" [level=3] [ref=e180]
+              - generic [ref=e185]:
+                - generic [ref=e187]: GitHub
+                - generic [ref=e189]: https://github.com › nick8592
+            - generic [ref=e190]:
+              - generic [ref=e191]: ·
+              - link "Перевести эту страницу" [ref=e192] [cursor=pointer]:
+                - /url: https://github.com/nick8592/text-guided-image-colorization
+            - button "Об этом результате" [ref=e193] [cursor=pointer]:
+              - img [ref=e196]
+          - generic [ref=e200]:
+            - text: Upload an
+            - emphasis [ref=e201]: image
+            - text: and use the interface to control the colors of specific objects in the
+            - emphasis [ref=e202]: image
+            - text: . But still the
+            - emphasis [ref=e203]: model
+            - text: can generate images without a specific prompt.
+        - generic [ref=e207]:
+          - generic [ref=e210]:
+            - link "Migrated from GitHub · fffiloni/text-guided-image- ... Hugging Face https://huggingface.co › commit" [ref=e212] [cursor=pointer]:
+              - /url: https://huggingface.co/spaces/fffiloni/text-guided-image-colorization/commit/691af462e87855c68566f90263435a974b07d7b4
+              - heading "Migrated from GitHub · fffiloni/text-guided-image- ..." [level=3] [ref=e213]
+              - generic [ref=e218]:
+                - generic [ref=e220]: Hugging Face
+                - generic [ref=e222]: https://huggingface.co › commit
+            - generic [ref=e223]:
+              - generic [ref=e224]: ·
+              - link "Перевести эту страницу" [ref=e225] [cursor=pointer]:
+                - /url: https://huggingface.co/spaces/fffiloni/text-guided-image-colorization/commit/691af462e87855c68566f90263435a974b07d7b4
+            - button "Об этом результате" [ref=e226] [cursor=pointer]:
+              - img [ref=e229]
+          - generic [ref=e232]:
+            - generic [ref=e233]: 22 нояб. 2024 г. —
+            - generic [ref=e234]:
+              - text: + This project utilizes the power of **Stable Diffusion (SDXL/SDXL-Light)** and the **BLIP (Bootstrapping Language-
+              - emphasis [ref=e235]: Image
+              - text: Pre-training)** ...
+        - generic [ref=e239]:
+          - generic [ref=e242]:
+            - 'link "[ICCV 2023] DDColor: Towards Photo-Realistic ... GitHub https://github.com › piddnad" [ref=e244] [cursor=pointer]':
+              - /url: https://github.com/piddnad/DDColor
+              - 'heading "[ICCV 2023] DDColor: Towards Photo-Realistic ..." [level=3] [ref=e245]'
+              - generic [ref=e250]:
+                - generic [ref=e252]: GitHub
+                - generic [ref=e254]: https://github.com › piddnad
+            - generic [ref=e255]:
+              - generic [ref=e256]: ·
+              - link "Перевести эту страницу" [ref=e257] [cursor=pointer]:
+                - /url: https://github.com/piddnad/DDColor
+            - button "Об этом результате" [ref=e258] [cursor=pointer]:
+              - img [ref=e261]
+          - generic [ref=e265]:
+            - emphasis [ref=e266]: DDColor can provide vivid and natural colorization
+            - text: for historical black and white old photos. It can even colorize/recolor landscapes from anime games.
+        - generic [ref=e270]:
+          - generic [ref=e273]:
+            - 'link "TencentARC/ColorFlow: The official implementation ... GitHub https://github.com › ColorFlow" [ref=e275] [cursor=pointer]':
+              - /url: https://github.com/TencentARC/ColorFlow
+              - 'heading "TencentARC/ColorFlow: The official implementation ..." [level=3] [ref=e276]'
+              - generic [ref=e281]:
+                - generic [ref=e283]: GitHub
+                - generic [ref=e285]: https://github.com › ColorFlow
+            - generic [ref=e286]:
+              - generic [ref=e287]: ·
+              - link "Перевести эту страницу" [ref=e288] [cursor=pointer]:
+                - /url: https://github.com/TencentARC/ColorFlow
+            - button "Об этом результате" [ref=e289] [cursor=pointer]:
+              - img [ref=e292]
+          - generic [ref=e295]:
+            - generic [ref=e296]: 17 дек. 2024 г. —
+            - generic [ref=e297]:
+              - text: We propose ColorFlow, a three-stage diffusion-based framework tailored for
+              - emphasis [ref=e298]: image
+              - text: sequence
+              - emphasis [ref=e299]: colorization
+              - text: in industrial applications.
+        - generic [ref=e303]:
+          - generic [ref=e306]:
+            - 'link "Spyrosigma/Image-Colorizer: PyTorch model which ... GitHub https://github.com › Spyrosigma" [ref=e308] [cursor=pointer]':
+              - /url: https://github.com/Spyrosigma/Image-Colorizer
+              - 'heading "Spyrosigma/Image-Colorizer: PyTorch model which ..." [level=3] [ref=e309]'
+              - generic [ref=e314]:
+                - generic [ref=e316]: GitHub
+                - generic [ref=e318]: https://github.com › Spyrosigma
+            - generic [ref=e319]:
+              - generic [ref=e320]: ·
+              - link "Перевести эту страницу" [ref=e321] [cursor=pointer]:
+                - /url: https://github.com/Spyrosigma/Image-Colorizer
+            - button "Об этом результате" [ref=e322] [cursor=pointer]:
+              - img [ref=e325]
+          - generic [ref=e329]:
+            - text: This web application, built using Streamlit, allows you to
+            - emphasis [ref=e330]: colorize black and white images
+            - text: using deep learning models. It provides a user-friendly interface ...
+        - generic [ref=e334]:
+          - generic [ref=e337]:
+            - 'link "lyf1212/Color-Turbo: A benchmark of language-based ... GitHub https://github.com › lyf1212" [ref=e339] [cursor=pointer]':
+              - /url: https://github.com/lyf1212/Color-Turbo
+              - 'heading "lyf1212/Color-Turbo: A benchmark of language-based ..." [level=3] [ref=e340]'
+              - generic [ref=e345]:
+                - generic [ref=e347]: GitHub
+                - generic [ref=e349]: https://github.com › lyf1212
+            - generic [ref=e350]:
+              - generic [ref=e351]: ·
+              - link "Перевести эту страницу" [ref=e352] [cursor=pointer]:
+                - /url: https://github.com/lyf1212/Color-Turbo
+            - button "Об этом результате" [ref=e353] [cursor=pointer]:
+              - img [ref=e356]
+          - generic [ref=e360]:
+            - text: The core challenge is to construct an accurate cross-modal correspondence between grayscale images and
+            - emphasis [ref=e361]: color
+            - text: texts.
+        - generic [ref=e365]:
+          - generic [ref=e368]:
+            - link "Control Color Zhexin Liang https://zhexinliang.github.io › Control_Color" [ref=e370] [cursor=pointer]:
+              - /url: https://zhexinliang.github.io/Control_Color/
+              - heading "Control Color" [level=3] [ref=e371]
+              - generic [ref=e376]:
+                - generic [ref=e378]: Zhexin Liang
+                - generic [ref=e380]: https://zhexinliang.github.io › Control_Color
+            - button "Об этом результате" [ref=e381] [cursor=pointer]:
+              - img [ref=e384]
+          - generic [ref=e388]:
+            - text: We successfully achieve highly controllable multi-modal
+            - emphasis [ref=e389]: image colorization
+            - text: . Our method is built on Stable Diffusion with new designs such as stroke control.
+        - generic [ref=e393]:
+          - generic [ref=e394]:
+            - heading "Вопросы по теме" [level=2] [ref=e395]
+            - button "Об этом результате" [ref=e396] [cursor=pointer]:
+              - img [ref=e399]
+          - generic [ref=e401]:
+            - generic [ref=e405]:
+              - button "Is Hugging Face like GitHub?" [ref=e407] [cursor=pointer]:
+                - generic [ref=e409]: Is Hugging Face like GitHub?
+                - img [ref=e412]
+              - text: "\"... ...\" \"... ...\""
+            - button "What is the color code for GitHub?" [ref=e421] [cursor=pointer]:
+              - generic [ref=e423]: What is the color code for GitHub?
+              - img [ref=e426]
+        - generic [ref=e432]:
+          - heading "Картинки" [level=2] [ref=e436]
+          - generic [ref=e440]:
+            - generic [ref=e444] [cursor=pointer]:
+              - 'link "GitHub - ZhexinLiang/Control-Color: Control Color ... GitHub"':
+                - /url: https://github.com/ZhexinLiang/Control-Color
+              - 'button "GitHub - ZhexinLiang/Control-Color: Control Color ..." [ref=e446]':
+                - 'img "GitHub - ZhexinLiang/Control-Color: Control Color ..." [ref=e448]'
+              - generic [ref=e450]:
+                - generic [ref=e452]: "GitHub - ZhexinLiang/Control-Color: Control Color ..."
+                - generic [ref=e453]:
+                  - generic [ref=e460]: GitHub
+                  - button "Об этом результате" [ref=e463]:
+                    - img [ref=e466]
+            - generic [ref=e471] [cursor=pointer]:
+              - 'link "GitHub - ryanwng12/img-colorization: This repository will ... GitHub"':
+                - /url: https://github.com/ryanwng12/img-colorization
+              - 'button "GitHub - ryanwng12/img-colorization: This repository will ..." [ref=e473]':
+                - 'img "GitHub - ryanwng12/img-colorization: This repository will ..." [ref=e475]'
+              - generic [ref=e477]:
+                - generic [ref=e479]: "GitHub - ryanwng12/img-colorization: This repository will ..."
+                - generic [ref=e480]:
+                  - generic [ref=e487]: GitHub
+                  - button "Об этом результате" [ref=e490]:
+                    - img [ref=e493]
+            - generic [ref=e498] [cursor=pointer]:
+              - 'link "GitHub - MarkMoHR/Awesome-Image-Colorization: :books: A ... GitHub"':
+                - /url: https://github.com/MarkMoHR/Awesome-Image-Colorization
+              - 'button "GitHub - MarkMoHR/Awesome-Image-Colorization: :books: A ..." [ref=e500]':
+                - 'img "GitHub - MarkMoHR/Awesome-Image-Colorization: :books: A ..." [ref=e502]'
+              - generic [ref=e504]:
+                - generic [ref=e506]: "GitHub - MarkMoHR/Awesome-Image-Colorization: :books: A ..."
+                - generic [ref=e507]:
+                  - generic [ref=e514]: GitHub
+                  - button "Об этом результате" [ref=e517]:
+                    - img [ref=e520]
+          - button "Другие изображения" [ref=e523] [cursor=pointer]:
+            - separator [ref=e524]
+            - generic [ref=e525]:
+              - generic [ref=e526]: Другие изображения
+              - img [ref=e528]
+        - generic [ref=e532]:
+          - heading "Web results" [level=2] [ref=e533]
+          - generic [ref=e534]:
+            - generic [ref=e537]:
+              - 'link "jantic/DeOldify: A Deep Learning based project ... GitHub https://github.com › jantic › d..." [ref=e539] [cursor=pointer]':
+                - /url: https://github.com/jantic/deoldify
+                - 'heading "jantic/DeOldify: A Deep Learning based project ..." [level=3] [ref=e540]'
+                - generic [ref=e545]:
+                  - generic [ref=e547]: GitHub
+                  - generic [ref=e549]: https://github.com › jantic › d...
+              - generic [ref=e550]:
+                - generic [ref=e551]: ·
+                - link "Перевести эту страницу" [ref=e552] [cursor=pointer]:
+                  - /url: https://github.com/jantic/deoldify
+              - button "Об этом результате" [ref=e553] [cursor=pointer]:
+                - img [ref=e556]
+            - generic [ref=e559]:
+              - generic [ref=e560]: 19 окт. 2024 г. —
+              - generic [ref=e561]:
+                - text: A Deep Learning based project for
+                - emphasis [ref=e562]: colorizing and restoring old images
+                - text: (and video!) - jantic/DeOldify.
+            - generic [ref=e564]:
+              - text: "Не найдено: huggingface ‎| Нужно включить:"
+              - link "huggingface" [ref=e565] [cursor=pointer]:
+                - /url: /search?sca_esv=5d5eb154281590ac&q=InstaColor+image+colorization+model+%22huggingface%22+github&sa=X&ved=2ahUKEwiZ4afU39uTAxXlIxAIHf1SNRwQ5t4CegQIPBAB
+      - generic [ref=e567]:
+        - generic [ref=e572]:
+          - heading "Другие также ищут" [level=2] [ref=e574]
+          - generic [ref=e576]:
+            - generic [ref=e577]:
+              - link "Ddcolor github" [ref=e581] [cursor=pointer]:
+                - /url: /search?sca_esv=5d5eb154281590ac&q=Ddcolor+github&sa=X&ved=2ahUKEwiZ4afU39uTAxXlIxAIHf1SNRwQ1QJ6BAgmEAE
+                - generic [ref=e582]:
+                  - generic [ref=e587]: Ddcolor github
+                  - img [ref=e591]
+              - link "Ddcolor comfyui" [ref=e596] [cursor=pointer]:
+                - /url: /search?sca_esv=5d5eb154281590ac&q=Ddcolor+comfyui&sa=X&ved=2ahUKEwiZ4afU39uTAxXlIxAIHf1SNRwQ1QJ6BAg-EAE
+                - generic [ref=e597]:
+                  - generic [ref=e602]: Ddcolor comfyui
+                  - img [ref=e606]
+              - link "Image colorization GitHub" [ref=e611] [cursor=pointer]:
+                - /url: /search?sca_esv=5d5eb154281590ac&q=Image+colorization+GitHub&sa=X&ved=2ahUKEwiZ4afU39uTAxXlIxAIHf1SNRwQ1QJ6BAg_EAE
+                - generic [ref=e612]:
+                  - generic [ref=e617]: Image colorization GitHub
+                  - img [ref=e621]
+              - link "Ddcolor huggingface" [ref=e626] [cursor=pointer]:
+                - /url: /search?sca_esv=5d5eb154281590ac&q=Ddcolor+huggingface&sa=X&ved=2ahUKEwiZ4afU39uTAxXlIxAIHf1SNRwQ1QJ6BAg9EAE
+                - generic [ref=e627]:
+                  - generic [ref=e632]: Ddcolor huggingface
+                  - img [ref=e636]
+            - generic [ref=e638]:
+              - link "DDColor Towards Photo-Realistic image colorization via Dual Decoders" [ref=e642] [cursor=pointer]:
+                - /url: /search?sca_esv=5d5eb154281590ac&q=DDColor+Towards+Photo-Realistic+image+colorization+via+Dual+Decoders&sa=X&ved=2ahUKEwiZ4afU39uTAxXlIxAIHf1SNRwQ1QJ6BAg6EAE
+                - generic [ref=e643]:
+                  - generic [ref=e648]: DDColor Towards Photo-Realistic image colorization via Dual Decoders
+                  - img [ref=e652]
+              - link "Colorflow github" [ref=e657] [cursor=pointer]:
+                - /url: /search?sca_esv=5d5eb154281590ac&q=Colorflow+github&sa=X&ved=2ahUKEwiZ4afU39uTAxXlIxAIHf1SNRwQ1QJ6BAg0EAE
+                - generic [ref=e658]:
+                  - generic [ref=e663]: Colorflow github
+                  - img [ref=e667]
+              - link "Ddcolor paper" [ref=e672] [cursor=pointer]:
+                - /url: /search?sca_esv=5d5eb154281590ac&q=Ddcolor+paper&sa=X&ved=2ahUKEwiZ4afU39uTAxXlIxAIHf1SNRwQ1QJ6BAgvEAE
+                - generic [ref=e673]:
+                  - generic [ref=e678]: Ddcolor paper
+                  - img [ref=e682]
+              - link "Ddcolor onnx" [ref=e687] [cursor=pointer]:
+                - /url: /search?sca_esv=5d5eb154281590ac&q=Ddcolor+onnx&sa=X&ved=2ahUKEwiZ4afU39uTAxXlIxAIHf1SNRwQ1QJ6BAgsEAE
+                - generic [ref=e688]:
+                  - generic [ref=e693]: Ddcolor onnx
+                  - img [ref=e697]
+        - navigation [ref=e699]:
+          - heading "Навигация по страницам" [level=1] [ref=e700]
+          - text: "1"
+          - link "Page 2" [ref=e703] [cursor=pointer]:
+            - /url: /search?q=InstaColor+image+colorization+model+huggingface+github&sca_esv=5d5eb154281590ac&ei=ZvnUaZmWFeXHwPAP_aXV4QE&start=10&sa=N&sstk=Af77f_crGyAZpUw1fL67-GMb7bFwgFHNr6jcpWWqd9D9W4oftBipL-0Fz21WXXG7CzwlKKKM5d3wqLljPMHkiZuuGdyatdM480IO6w&ved=2ahUKEwiZ4afU39uTAxXlIxAIHf1SNRwQ8tMDegQIChAE
+            - text: "2"
+          - link "Page 3" [ref=e705] [cursor=pointer]:
+            - /url: /search?q=InstaColor+image+colorization+model+huggingface+github&sca_esv=5d5eb154281590ac&ei=ZvnUaZmWFeXHwPAP_aXV4QE&start=20&sa=N&sstk=Af77f_crGyAZpUw1fL67-GMb7bFwgFHNr6jcpWWqd9D9W4oftBipL-0Fz21WXXG7CzwlKKKM5d3wqLljPMHkiZuuGdyatdM480IO6w&ved=2ahUKEwiZ4afU39uTAxXlIxAIHf1SNRwQ8tMDegQIChAG
+            - text: "3"
+          - link "Page 4" [ref=e707] [cursor=pointer]:
+            - /url: /search?q=InstaColor+image+colorization+model+huggingface+github&sca_esv=5d5eb154281590ac&ei=ZvnUaZmWFeXHwPAP_aXV4QE&start=30&sa=N&sstk=Af77f_crGyAZpUw1fL67-GMb7bFwgFHNr6jcpWWqd9D9W4oftBipL-0Fz21WXXG7CzwlKKKM5d3wqLljPMHkiZuuGdyatdM480IO6w&ved=2ahUKEwiZ4afU39uTAxXlIxAIHf1SNRwQ8tMDegQIChAI
+            - text: "4"
+          - link "Page 5" [ref=e709] [cursor=pointer]:
+            - /url: /search?q=InstaColor+image+colorization+model+huggingface+github&sca_esv=5d5eb154281590ac&ei=ZvnUaZmWFeXHwPAP_aXV4QE&start=40&sa=N&sstk=Af77f_crGyAZpUw1fL67-GMb7bFwgFHNr6jcpWWqd9D9W4oftBipL-0Fz21WXXG7CzwlKKKM5d3wqLljPMHkiZuuGdyatdM480IO6w&ved=2ahUKEwiZ4afU39uTAxXlIxAIHf1SNRwQ8tMDegQIChAK
+            - text: "5"
+          - link "Page 6" [ref=e711] [cursor=pointer]:
+            - /url: /search?q=InstaColor+image+colorization+model+huggingface+github&sca_esv=5d5eb154281590ac&ei=ZvnUaZmWFeXHwPAP_aXV4QE&start=50&sa=N&sstk=Af77f_crGyAZpUw1fL67-GMb7bFwgFHNr6jcpWWqd9D9W4oftBipL-0Fz21WXXG7CzwlKKKM5d3wqLljPMHkiZuuGdyatdM480IO6w&ved=2ahUKEwiZ4afU39uTAxXlIxAIHf1SNRwQ8tMDegQIChAM
+            - text: "6"
+          - link "Page 7" [ref=e713] [cursor=pointer]:
+            - /url: /search?q=InstaColor+image+colorization+model+huggingface+github&sca_esv=5d5eb154281590ac&ei=ZvnUaZmWFeXHwPAP_aXV4QE&start=60&sa=N&sstk=Af77f_crGyAZpUw1fL67-GMb7bFwgFHNr6jcpWWqd9D9W4oftBipL-0Fz21WXXG7CzwlKKKM5d3wqLljPMHkiZuuGdyatdM480IO6w&ved=2ahUKEwiZ4afU39uTAxXlIxAIHf1SNRwQ8tMDegQIChAO
+            - text: "7"
+          - link "Page 8" [ref=e715] [cursor=pointer]:
+            - /url: /search?q=InstaColor+image+colorization+model+huggingface+github&sca_esv=5d5eb154281590ac&ei=ZvnUaZmWFeXHwPAP_aXV4QE&start=70&sa=N&sstk=Af77f_crGyAZpUw1fL67-GMb7bFwgFHNr6jcpWWqd9D9W4oftBipL-0Fz21WXXG7CzwlKKKM5d3wqLljPMHkiZuuGdyatdM480IO6w&ved=2ahUKEwiZ4afU39uTAxXlIxAIHf1SNRwQ8tMDegQIChAQ
+            - text: "8"
+          - link "Page 9" [ref=e717] [cursor=pointer]:
+            - /url: /search?q=InstaColor+image+colorization+model+huggingface+github&sca_esv=5d5eb154281590ac&ei=ZvnUaZmWFeXHwPAP_aXV4QE&start=80&sa=N&sstk=Af77f_crGyAZpUw1fL67-GMb7bFwgFHNr6jcpWWqd9D9W4oftBipL-0Fz21WXXG7CzwlKKKM5d3wqLljPMHkiZuuGdyatdM480IO6w&ved=2ahUKEwiZ4afU39uTAxXlIxAIHf1SNRwQ8tMDegQIChAS
+            - text: "9"
+          - heading "Следующая" [level=2] [ref=e719]:
+            - link "Следующая" [ref=e720] [cursor=pointer]:
+              - /url: /search?q=InstaColor+image+colorization+model+huggingface+github&sca_esv=5d5eb154281590ac&ei=ZvnUaZmWFeXHwPAP_aXV4QE&start=10&sa=N&sstk=Af77f_crGyAZpUw1fL67-GMb7bFwgFHNr6jcpWWqd9D9W4oftBipL-0Fz21WXXG7CzwlKKKM5d3wqLljPMHkiZuuGdyatdM480IO6w&ved=2ahUKEwiZ4afU39uTAxXlIxAIHf1SNRwQ8NMDegQIChAU
+              - generic [ref=e722]: Следующая
+      - navigation
+    - contentinfo [ref=e723]:
+      - heading "Ссылки в нижнем колонтитуле" [level=1] [ref=e724]
+      - generic [ref=e728]:
+        - generic [ref=e730]:
+          - text: Россия
+          - generic [ref=e732]:
+            - button "Москва - На основе ваших предыдущих действий" [ref=e734] [cursor=pointer]:
+              - generic [ref=e735]: Москва
+              - generic [ref=e737]:
+                - text: "-"
+                - generic [ref=e738]: На основе ваших предыдущих действий
+            - text: "-"
+            - button "Обновить" [ref=e740] [cursor=pointer]: Обновить
+        - generic [ref=e743]:
+          - link "Справка" [ref=e744] [cursor=pointer]:
+            - /url: https://support.google.com/websearch/?p=ws_results_help&hl=ru&fg=1
+          - link "Отправить отзыв" [ref=e745] [cursor=pointer]:
+            - /url: "#"
+          - link "Конфиденциальность" [ref=e746] [cursor=pointer]:
+            - /url: https://policies.google.com/privacy?hl=ru&fg=1
+          - link "Условия" [ref=e747] [cursor=pointer]:
+            - /url: https://policies.google.com/terms?hl=ru&fg=1

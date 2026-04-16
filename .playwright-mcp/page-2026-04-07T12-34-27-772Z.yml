@@ -1,0 +1,338 @@
+- generic [active] [ref=e1]:
+  - generic:
+    - generic:
+      - link "Перейти к основному контенту" [ref=e2] [cursor=pointer]
+      - link "Справка по использованию специальных возможностей" [ref=e3] [cursor=pointer]:
+        - /url: https://support.google.com/websearch/answer/181196?hl=ru
+      - link "Оставить отзыв о специальных возможностях" [ref=e4] [cursor=pointer]
+  - generic [ref=e9]:
+    - search [ref=e10]:
+      - generic [ref=e12]:
+        - link "Главная страница Google" [ref=e14] [cursor=pointer]:
+          - /url: https://www.google.com/webhp?hl=ru&sa=X&ved=0ahUKEwjmst-H4NuTAxW0T1UIHXMvMtIQPAgJ
+          - img [ref=e15]
+        - generic [ref=e22]:
+          - generic [ref=e23]:
+            - combobox "Найти" [ref=e26]: InstColor reference-based colorization github InstColor reference-based colorization github
+            - generic [ref=e27]:
+              - button "Очистить" [ref=e29] [cursor=pointer]:
+                - img [ref=e31]
+              - generic [ref=e34]:
+                - button "Экранная клавиатура" [ref=e35] [cursor=pointer]:
+                  - img [ref=e37]
+                - button "Голосовой поиск" [ref=e39] [cursor=pointer]:
+                  - img [ref=e40]
+                - button "Поиск по картинке" [ref=e42] [cursor=pointer]:
+                  - img [ref=e43]
+          - button "Поиск" [ref=e45] [cursor=pointer]:
+            - img [ref=e48]
+    - generic [ref=e50]:
+      - button "Настройки" [ref=e52] [cursor=pointer]:
+        - img [ref=e55]
+      - generic [ref=e58]:
+        - button "Приложения Google" [ref=e60] [cursor=pointer]:
+          - img [ref=e61]
+        - link "Войти" [ref=e65] [cursor=pointer]:
+          - /url: https://accounts.google.com/ServiceLogin?hl=ru&passive=true&continue=https://www.google.com/search%3Fq%3DInstColor%2Breference-based%2Bcolorization%2Bgithub&ec=futura_srp_og_si_72236_p
+  - generic [ref=e67]:
+    - navigation [ref=e73]:
+      - generic [ref=e77]:
+        - list [ref=e78]:
+          - listitem [ref=e79]:
+            - link "Режим ИИ" [ref=e82] [cursor=pointer]:
+              - /url: /search?q=InstColor+reference-based+colorization+github&sca_esv=5d5eb154281590ac&udm=50&fbs=ADc_l-ZNYiECt50Q2Di4dBBBAYOL5VvBLfqib0fcrHkoXQatSbIDceDitUN2yBmRBnPF3dLZFvzxdUCyeyFgb8g-C7QnWWyqKrsvydZVFihJH8-paNLU3s2KIzlmyPCEKt_qKyItBExdb157ipDm0KJWFbjKIQTEQma0h1wkSM6O3Y8P3PFcgsurT7qLEGvDUtzvNjxS--NOZIq3gatjhavMGkooUuY3jWwkAn60NF1apvVIK1EHTI56niM3lFtCX_Mgte7-tWd_y8haL2Fh6GvGyEbghhIWTQ&aep=1&ntc=1&sa=X&ved=2ahUKEwjmst-H4NuTAxW0T1UIHXMvMtIQ2J8OegQIEhAE
+              - generic [ref=e85]: Режим ИИ
+          - listitem [ref=e86]:
+            - link "Все" [disabled] [ref=e87]:
+              - generic [ref=e89]: Все
+          - listitem [ref=e90]:
+            - link "Картинки" [ref=e91] [cursor=pointer]:
+              - /url: /search?sca_esv=5d5eb154281590ac&udm=2&fbs=ADc_l-ZNYiECt50Q2Di4dBBBAYOL5VvBLfqib0fcrHkoXQatSbIDceDitUN2yBmRBnPF3dLZFvzxdUCyeyFgb8g-C7QnWWyqKrsvydZVFihJH8-paNLU3s2KIzlmyPCEKt_qKyItBExdb157ipDm0KJWFbjKIQTEQma0h1wkSM6O3Y8P3PFcgsurT7qLEGvDUtzvNjxS--NOZIq3gatjhavMGkooUuY3jWwkAn60NF1apvVIK1EHTI56niM3lFtCX_Mgte7-tWd_y8haL2Fh6GvGyEbghhIWTQ&q=InstColor+reference-based+colorization+github&sa=X&ved=2ahUKEwjmst-H4NuTAxW0T1UIHXMvMtIQtKgLegQIGBAB
+              - generic [ref=e93]: Картинки
+          - listitem [ref=e94]:
+            - link "Видео" [ref=e95] [cursor=pointer]:
+              - /url: /search?sca_esv=5d5eb154281590ac&udm=7&fbs=ADc_l-ZNYiECt50Q2Di4dBBBAYOL5VvBLfqib0fcrHkoXQatSbIDceDitUN2yBmRBnPF3dLZFvzxdUCyeyFgb8g-C7QnWWyqKrsvydZVFihJH8-paNLU3s2KIzlmyPCEKt_qKyItBExdb157ipDm0KJWFbjKIQTEQma0h1wkSM6O3Y8P3PFcgsurT7qLEGvDUtzvNjxS--NOZIq3gatjhavMGkooUuY3jWwkAn60NF1apvVIK1EHTI56niM3lFtCX_Mgte7-tWd_y8haL2Fh6GvGyEbghhIWTQ&q=InstColor+reference-based+colorization+github&sa=X&ved=2ahUKEwjmst-H4NuTAxW0T1UIHXMvMtIQtKgLegQIFBAB
+              - generic [ref=e97]: Видео
+          - listitem [ref=e98]:
+            - link "Покупки" [ref=e99] [cursor=pointer]:
+              - /url: /search?sca_esv=5d5eb154281590ac&udm=28&fbs=ADc_l-ZNYiECt50Q2Di4dBBBAYOL5VvBLfqib0fcrHkoXQatSbIDceDitUN2yBmRBnPF3dLZFvzxdUCyeyFgb8g-C7QnWWyqKrsvydZVFihJH8-paNLU3s2KIzlmyPCEKt_qKyItBExdb157ipDm0KJWFbjKIQTEQma0h1wkSM6O3Y8P3PFcgsurT7qLEGvDUtzvNjxS--NOZIq3gatjhavMGkooUuY3jWwkAn60NF1apvVIK1EHTI56niM3lFtCX_Mgte7-tWd_y8haL2Fh6GvGyEbghhIWTQ&q=InstColor+reference-based+colorization+github&ved=1t:220175&ictx=111
+              - generic [ref=e101]: Покупки
+          - listitem [ref=e102]:
+            - link "Короткие видео" [ref=e103] [cursor=pointer]:
+              - /url: /search?sca_esv=5d5eb154281590ac&udm=39&fbs=ADc_l-ZNYiECt50Q2Di4dBBBAYOL5VvBLfqib0fcrHkoXQatSbIDceDitUN2yBmRBnPF3dLZFvzxdUCyeyFgb8g-C7QnWWyqKrsvydZVFihJH8-paNLU3s2KIzlmyPCEKt_qKyItBExdb157ipDm0KJWFbjKIQTEQma0h1wkSM6O3Y8P3PFcgsurT7qLEGvDUtzvNjxS--NOZIq3gatjhavMGkooUuY3jWwkAn60NF1apvVIK1EHTI56niM3lFtCX_Mgte7-tWd_y8haL2Fh6GvGyEbghhIWTQ&q=InstColor+reference-based+colorization+github&sa=X&ved=2ahUKEwjmst-H4NuTAxW0T1UIHXMvMtIQs6gLegQIFRAB
+              - generic [ref=e105]: Короткие видео
+          - listitem [ref=e106]:
+            - link "Новости" [ref=e107] [cursor=pointer]:
+              - /url: /search?sca_esv=5d5eb154281590ac&q=InstColor+reference-based+colorization+github&tbm=nws&source=lnms&fbs=ADc_l-ZNYiECt50Q2Di4dBBBAYOL5VvBLfqib0fcrHkoXQatSbIDceDitUN2yBmRBnPF3dLZFvzxdUCyeyFgb8g-C7QnWWyqKrsvydZVFihJH8-paNLU3s2KIzlmyPCEKt_qKyItBExdb157ipDm0KJWFbjKIQTEQma0h1wkSM6O3Y8P3PFcgsurT7qLEGvDUtzvNjxS--NOZIq3gatjhavMGkooUuY3jWwkAn60NF1apvVIK1EHTI56niM3lFtCX_Mgte7-tWd_y8haL2Fh6GvGyEbghhIWTQ&sa=X&ved=2ahUKEwjmst-H4NuTAxW0T1UIHXMvMtIQ0pQJegQIFhAB
+              - generic [ref=e109]: Новости
+          - listitem [ref=e110]:
+            - button "Ещё фильтры" [ref=e111] [cursor=pointer]:
+              - generic "Ещё фильтры" [ref=e112]:
+                - generic [ref=e113]:
+                  - generic [ref=e114]: Ещё
+                  - img [ref=e116]
+        - button "Инструменты" [ref=e119] [cursor=pointer]:
+          - generic [ref=e121]:
+            - generic [ref=e122]: Инструменты
+            - img [ref=e124]
+    - heading "Результаты поиска" [level=1] [ref=e126]
+    - generic [ref=e131]:
+      - generic [ref=e150]:
+        - heading "Поиск Ещё думаю…" [level=2] [ref=e154]:
+          - generic [ref=e155]:
+            - generic [ref=e157]: Поиск
+            - generic [ref=e159]: Ещё думаю…
+        - progressbar [ref=e161]
+      - main [ref=e203]:
+        - generic [ref=e207]:
+          - generic [ref=e210]:
+            - heading "Web results" [level=2] [ref=e211]
+            - generic [ref=e212]:
+              - generic [ref=e215]:
+                - link "ericsujw/InstColorization GitHub https://github.com › ericsujw" [ref=e217] [cursor=pointer]:
+                  - /url: https://github.com/ericsujw/InstColorization
+                  - heading "ericsujw/InstColorization" [level=3] [ref=e218]
+                  - generic [ref=e223]:
+                    - generic [ref=e225]: GitHub
+                    - generic [ref=e227]: https://github.com › ericsujw
+                - generic [ref=e228]:
+                  - generic [ref=e229]: ·
+                  - link "Перевести эту страницу" [ref=e230] [cursor=pointer]:
+                    - /url: https://github.com/ericsujw/InstColorization
+                - button "Об этом результате" [ref=e231] [cursor=pointer]:
+                  - img [ref=e234]
+              - generic [ref=e238]:
+                - text: In this paper, we propose a method for achieving instance-aware
+                - emphasis [ref=e239]: colorization
+                - text: . Our network architecture leverages an off-the-shelf object detector to obtain ...
+          - generic [ref=e243]:
+            - generic [ref=e246]:
+              - link "NcolasDran/sketch-colorization-based-on-reference-structure GitHub https://github.com › NcolasDran" [ref=e248] [cursor=pointer]:
+                - /url: https://github.com/NcolasDran/sketch-colorization-based-on-reference-structure
+                - heading "NcolasDran/sketch-colorization-based-on-reference-structure" [level=3] [ref=e249]
+                - generic [ref=e254]:
+                  - generic [ref=e256]: GitHub
+                  - generic [ref=e258]: https://github.com › NcolasDran
+              - generic [ref=e259]:
+                - generic [ref=e260]: ·
+                - link "Перевести эту страницу" [ref=e261] [cursor=pointer]:
+                  - /url: https://github.com/NcolasDran/sketch-colorization-based-on-reference-structure
+              - button "Об этом результате" [ref=e262] [cursor=pointer]:
+                - img [ref=e265]
+            - generic [ref=e269]:
+              - text: This repository contains the implementation of a sketch
+              - emphasis [ref=e270]: colorization
+              - text: network. The output image of this network should have the colors of a
+              - emphasis [ref=e271]: reference
+              - text: image.
+          - generic [ref=e275]:
+            - generic [ref=e278]:
+              - link "Instance-aware Image Colorization ‍ GitHub Pages documentation https://ericsujw.github.io › Ins..." [ref=e280] [cursor=pointer]:
+                - /url: https://ericsujw.github.io/InstColorization/
+                - heading "Instance-aware Image Colorization ‍" [level=3] [ref=e281]
+                - generic [ref=e283]:
+                  - img [ref=e287]
+                  - generic [ref=e289]:
+                    - generic [ref=e291]: GitHub Pages documentation
+                    - generic [ref=e293]: https://ericsujw.github.io › Ins...
+              - generic [ref=e294]:
+                - generic [ref=e295]: ·
+                - link "Перевести эту страницу" [ref=e296] [cursor=pointer]:
+                  - /url: https://ericsujw.github.io/InstColorization/
+              - button "Об этом результате" [ref=e297] [cursor=pointer]:
+                - img [ref=e300]
+            - generic [ref=e304]:
+              - text: In this paper, we propose a novel deep learning framework to achieve instance-aware
+              - emphasis [ref=e305]: colorization
+              - text: . Our network architecture leverages an off-the-shelf object ...
+          - generic [ref=e309]:
+            - generic [ref=e312]:
+              - 'link "cGAN: This project is used for manga colorization ... GitHub https://github.com › linshys" [ref=e314] [cursor=pointer]':
+                - /url: https://github.com/linshys/Example_Based_Manga_Colorization---cGAN
+                - 'heading "cGAN: This project is used for manga colorization ..." [level=3] [ref=e315]'
+                - generic [ref=e320]:
+                  - generic [ref=e322]: GitHub
+                  - generic [ref=e324]: https://github.com › linshys
+              - generic [ref=e325]:
+                - generic [ref=e326]: ·
+                - link "Перевести эту страницу" [ref=e327] [cursor=pointer]:
+                  - /url: https://github.com/linshys/Example_Based_Manga_Colorization---cGAN
+              - button "Об этом результате" [ref=e328] [cursor=pointer]:
+                - img [ref=e331]
+            - generic [ref=e335]:
+              - text: You can
+              - emphasis [ref=e336]: colorize gray manga or character sketches using any reference image
+              - text: you want, this model will faithfully retain the color features and transfer them to ...
+          - generic [ref=e340]:
+            - generic [ref=e343]:
+              - 'link "lyf1212/Color-Turbo: A benchmark of language-based ... GitHub https://github.com › lyf1212" [ref=e345] [cursor=pointer]':
+                - /url: https://github.com/lyf1212/Color-Turbo
+                - 'heading "lyf1212/Color-Turbo: A benchmark of language-based ..." [level=3] [ref=e346]'
+                - generic [ref=e351]:
+                  - generic [ref=e353]: GitHub
+                  - generic [ref=e355]: https://github.com › lyf1212
+              - generic [ref=e356]:
+                - generic [ref=e357]: ·
+                - link "Перевести эту страницу" [ref=e358] [cursor=pointer]:
+                  - /url: https://github.com/lyf1212/Color-Turbo
+              - button "Об этом результате" [ref=e359] [cursor=pointer]:
+                - img [ref=e362]
+            - generic [ref=e366]:
+              - text: A benchmark of language-
+              - emphasis [ref=e367]: based
+              - text: image
+              - emphasis [ref=e368]: colorization
+              - text: methods and
+              - emphasis [ref=e369]: code
+              - text: of
+              - emphasis [ref=e370]: Color
+              - text: "-Turbo - lyf1212/"
+              - emphasis [ref=e371]: Color
+              - text: "-Turbo."
+          - generic [ref=e375]:
+            - generic [ref=e378]:
+              - 'link "Color2Embed: Fast Exemplar-Based Image Colorization ... GitHub https://github.com › zhaoheng..." [ref=e380] [cursor=pointer]':
+                - /url: https://github.com/zhaohengyuan1/Color2Embed
+                - 'heading "Color2Embed: Fast Exemplar-Based Image Colorization ..." [level=3] [ref=e381]'
+                - generic [ref=e386]:
+                  - generic [ref=e388]: GitHub
+                  - generic [ref=e390]: https://github.com › zhaoheng...
+              - generic [ref=e391]:
+                - generic [ref=e392]: ·
+                - link "Перевести эту страницу" [ref=e393] [cursor=pointer]:
+                  - /url: https://github.com/zhaohengyuan1/Color2Embed
+              - button "Об этом результате" [ref=e394] [cursor=pointer]:
+                - img [ref=e397]
+            - generic [ref=e401]:
+              - emphasis [ref=e402]: Color2Embed
+              - text: ": Fast Exemplar-Based Image Colorization using Color Embeddings Paper. This project is the simple implementation of Color2Embed."
+          - generic [ref=e406]:
+            - generic [ref=e409]:
+              - link "hpotechius/ColorTransferLib GitHub https://github.com › hpotechius" [ref=e411] [cursor=pointer]:
+                - /url: https://github.com/hpotechius/ColorTransferLib
+                - heading "hpotechius/ColorTransferLib" [level=3] [ref=e412]
+                - generic [ref=e417]:
+                  - generic [ref=e419]: GitHub
+                  - generic [ref=e421]: https://github.com › hpotechius
+              - generic [ref=e422]:
+                - generic [ref=e423]: ·
+                - link "Перевести эту страницу" [ref=e424] [cursor=pointer]:
+                  - /url: https://github.com/hpotechius/ColorTransferLib
+              - button "Об этом результате" [ref=e425] [cursor=pointer]:
+                - img [ref=e428]
+            - generic [ref=e432]:
+              - text: Color
+              - emphasis [ref=e433]: Transfer
+              - text: Lib is a library dedicated to color transfer, style transfer, and colorization, featuring a diverse range of published algorithms.
+          - generic [ref=e437]:
+            - generic [ref=e440]:
+              - 'link "MarkMoHR/Awesome-Image-Colorization: :books GitHub https://github.com › Awesome..." [ref=e442] [cursor=pointer]':
+                - /url: https://github.com/MarkMoHR/Awesome-Image-Colorization
+                - 'heading "MarkMoHR/Awesome-Image-Colorization: :books" [level=3] [ref=e443]'
+                - generic [ref=e448]:
+                  - generic [ref=e450]: GitHub
+                  - generic [ref=e452]: https://github.com › Awesome...
+              - generic [ref=e453]:
+                - generic [ref=e454]: ·
+                - link "Перевести эту страницу" [ref=e455] [cursor=pointer]:
+                  - /url: https://github.com/MarkMoHR/Awesome-Image-Colorization
+              - button "Об этом результате" [ref=e456] [cursor=pointer]:
+                - img [ref=e459]
+            - generic [ref=e463]:
+              - text: A collection of
+              - emphasis [ref=e464]: Deep Learning based Image Colorization papers
+              - text: and corresponding source code/demo program, including Automatic and User Guided (ie with User ...
+          - generic [ref=e468]:
+            - generic [ref=e471]:
+              - 'link "Computer-aided Colorization State-of-the-science: A Survey arXiv https://arxiv.org › html" [ref=e473] [cursor=pointer]':
+                - /url: https://arxiv.org/html/2410.02288v1
+                - 'heading "Computer-aided Colorization State-of-the-science: A Survey" [level=3] [ref=e474]'
+                - generic [ref=e479]:
+                  - generic [ref=e481]: arXiv
+                  - generic [ref=e483]: https://arxiv.org › html
+              - generic [ref=e484]:
+                - generic [ref=e485]: ·
+                - link "Перевести эту страницу" [ref=e486] [cursor=pointer]:
+                  - /url: https://arxiv.org/html/2410.02288v1
+              - button "Об этом результате" [ref=e487] [cursor=pointer]:
+                - img [ref=e490]
+            - generic [ref=e493]:
+              - generic [ref=e494]: 3 окт. 2024 г. —
+              - generic [ref=e495]:
+                - text: Reference-based colorization is a method that
+                - emphasis [ref=e496]: converts color information from reference images
+                - text: to target gray-scale images or black-and ...
+          - generic [ref=e500]:
+            - generic [ref=e503]:
+              - link "tellurion-kanata/colorizeDiffusion GitHub https://github.com › colorizeD..." [ref=e505] [cursor=pointer]:
+                - /url: https://github.com/tellurion-kanata/colorizeDiffusion
+                - heading "tellurion-kanata/colorizeDiffusion" [level=3] [ref=e506]
+                - generic [ref=e511]:
+                  - generic [ref=e513]: GitHub
+                  - generic [ref=e515]: https://github.com › colorizeD...
+              - generic [ref=e516]:
+                - generic [ref=e517]: ·
+                - link "Перевести эту страницу" [ref=e518] [cursor=pointer]:
+                  - /url: https://github.com/tellurion-kanata/colorizeDiffusion
+              - button "Об этом результате" [ref=e519] [cursor=pointer]:
+                - img [ref=e522]
+            - generic [ref=e526]:
+              - emphasis [ref=e527]: Colorize Diffusion is a SD-based colorization framework
+              - text: that can achieve high-quality colorization results with arbitrary input pairs.
+        - navigation [ref=e530]:
+          - heading "Навигация по страницам" [level=1] [ref=e531]
+          - text: "1"
+          - link "Page 2" [ref=e534] [cursor=pointer]:
+            - /url: /search?q=InstColor+reference-based+colorization+github&sca_esv=5d5eb154281590ac&ei=0vnUaeaBDbSf1fIP897IkQ0&start=10&sa=N&sstk=Af77f_eFBYSneRno4-LpBgcmOtNKL_ldcut28WxO7aPsuPNE6Wvwifr3CHxZ5bzbn4oINpCB_PEUh9jQBSOU7ytjA7dVgYx_QyhVWw&ved=2ahUKEwjmst-H4NuTAxW0T1UIHXMvMtIQ8tMDegQICxAE
+            - text: "2"
+          - link "Page 3" [ref=e536] [cursor=pointer]:
+            - /url: /search?q=InstColor+reference-based+colorization+github&sca_esv=5d5eb154281590ac&ei=0vnUaeaBDbSf1fIP897IkQ0&start=20&sa=N&sstk=Af77f_eFBYSneRno4-LpBgcmOtNKL_ldcut28WxO7aPsuPNE6Wvwifr3CHxZ5bzbn4oINpCB_PEUh9jQBSOU7ytjA7dVgYx_QyhVWw&ved=2ahUKEwjmst-H4NuTAxW0T1UIHXMvMtIQ8tMDegQICxAG
+            - text: "3"
+          - link "Page 4" [ref=e538] [cursor=pointer]:
+            - /url: /search?q=InstColor+reference-based+colorization+github&sca_esv=5d5eb154281590ac&ei=0vnUaeaBDbSf1fIP897IkQ0&start=30&sa=N&sstk=Af77f_eFBYSneRno4-LpBgcmOtNKL_ldcut28WxO7aPsuPNE6Wvwifr3CHxZ5bzbn4oINpCB_PEUh9jQBSOU7ytjA7dVgYx_QyhVWw&ved=2ahUKEwjmst-H4NuTAxW0T1UIHXMvMtIQ8tMDegQICxAI
+            - text: "4"
+          - link "Page 5" [ref=e540] [cursor=pointer]:
+            - /url: /search?q=InstColor+reference-based+colorization+github&sca_esv=5d5eb154281590ac&ei=0vnUaeaBDbSf1fIP897IkQ0&start=40&sa=N&sstk=Af77f_eFBYSneRno4-LpBgcmOtNKL_ldcut28WxO7aPsuPNE6Wvwifr3CHxZ5bzbn4oINpCB_PEUh9jQBSOU7ytjA7dVgYx_QyhVWw&ved=2ahUKEwjmst-H4NuTAxW0T1UIHXMvMtIQ8tMDegQICxAK
+            - text: "5"
+          - link "Page 6" [ref=e542] [cursor=pointer]:
+            - /url: /search?q=InstColor+reference-based+colorization+github&sca_esv=5d5eb154281590ac&ei=0vnUaeaBDbSf1fIP897IkQ0&start=50&sa=N&sstk=Af77f_eFBYSneRno4-LpBgcmOtNKL_ldcut28WxO7aPsuPNE6Wvwifr3CHxZ5bzbn4oINpCB_PEUh9jQBSOU7ytjA7dVgYx_QyhVWw&ved=2ahUKEwjmst-H4NuTAxW0T1UIHXMvMtIQ8tMDegQICxAM
+            - text: "6"
+          - link "Page 7" [ref=e544] [cursor=pointer]:
+            - /url: /search?q=InstColor+reference-based+colorization+github&sca_esv=5d5eb154281590ac&ei=0vnUaeaBDbSf1fIP897IkQ0&start=60&sa=N&sstk=Af77f_eFBYSneRno4-LpBgcmOtNKL_ldcut28WxO7aPsuPNE6Wvwifr3CHxZ5bzbn4oINpCB_PEUh9jQBSOU7ytjA7dVgYx_QyhVWw&ved=2ahUKEwjmst-H4NuTAxW0T1UIHXMvMtIQ8tMDegQICxAO
+            - text: "7"
+          - link "Page 8" [ref=e546] [cursor=pointer]:
+            - /url: /search?q=InstColor+reference-based+colorization+github&sca_esv=5d5eb154281590ac&ei=0vnUaeaBDbSf1fIP897IkQ0&start=70&sa=N&sstk=Af77f_eFBYSneRno4-LpBgcmOtNKL_ldcut28WxO7aPsuPNE6Wvwifr3CHxZ5bzbn4oINpCB_PEUh9jQBSOU7ytjA7dVgYx_QyhVWw&ved=2ahUKEwjmst-H4NuTAxW0T1UIHXMvMtIQ8tMDegQICxAQ
+            - text: "8"
+          - link "Page 9" [ref=e548] [cursor=pointer]:
+            - /url: /search?q=InstColor+reference-based+colorization+github&sca_esv=5d5eb154281590ac&ei=0vnUaeaBDbSf1fIP897IkQ0&start=80&sa=N&sstk=Af77f_eFBYSneRno4-LpBgcmOtNKL_ldcut28WxO7aPsuPNE6Wvwifr3CHxZ5bzbn4oINpCB_PEUh9jQBSOU7ytjA7dVgYx_QyhVWw&ved=2ahUKEwjmst-H4NuTAxW0T1UIHXMvMtIQ8tMDegQICxAS
+            - text: "9"
+          - link "Page 10" [ref=e550] [cursor=pointer]:
+            - /url: /search?q=InstColor+reference-based+colorization+github&sca_esv=5d5eb154281590ac&ei=0vnUaeaBDbSf1fIP897IkQ0&start=90&sa=N&sstk=Af77f_eFBYSneRno4-LpBgcmOtNKL_ldcut28WxO7aPsuPNE6Wvwifr3CHxZ5bzbn4oINpCB_PEUh9jQBSOU7ytjA7dVgYx_QyhVWw&ved=2ahUKEwjmst-H4NuTAxW0T1UIHXMvMtIQ8tMDegQICxAU
+            - text: "10"
+          - heading "Следующая" [level=2] [ref=e552]:
+            - link "Следующая" [ref=e553] [cursor=pointer]:
+              - /url: /search?q=InstColor+reference-based+colorization+github&sca_esv=5d5eb154281590ac&ei=0vnUaeaBDbSf1fIP897IkQ0&start=10&sa=N&sstk=Af77f_eFBYSneRno4-LpBgcmOtNKL_ldcut28WxO7aPsuPNE6Wvwifr3CHxZ5bzbn4oINpCB_PEUh9jQBSOU7ytjA7dVgYx_QyhVWw&ved=2ahUKEwjmst-H4NuTAxW0T1UIHXMvMtIQ8NMDegQICxAW
+              - generic [ref=e555]: Следующая
+        - navigation
+    - contentinfo [ref=e556]:
+      - heading "Ссылки в нижнем колонтитуле" [level=1] [ref=e557]
+      - generic [ref=e561]:
+        - generic [ref=e563]:
+          - text: Россия
+          - generic [ref=e565]:
+            - button "Москва - На основе ваших предыдущих действий" [ref=e567] [cursor=pointer]:
+              - generic [ref=e568]: Москва
+              - generic [ref=e570]:
+                - text: "-"
+                - generic [ref=e571]: На основе ваших предыдущих действий
+            - text: "-"
+            - button "Обновить" [ref=e573] [cursor=pointer]: Обновить
+        - generic [ref=e576]:
+          - link "Справка" [ref=e577] [cursor=pointer]:
+            - /url: https://support.google.com/websearch/?p=ws_results_help&hl=ru&fg=1
+          - link "Отправить отзыв" [ref=e578] [cursor=pointer]:
+            - /url: "#"
+          - link "Конфиденциальность" [ref=e579] [cursor=pointer]:
+            - /url: https://policies.google.com/privacy?hl=ru&fg=1
+          - link "Условия" [ref=e580] [cursor=pointer]:
+            - /url: https://policies.google.com/terms?hl=ru&fg=1

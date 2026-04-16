@@ -744,6 +744,152 @@ def health():
     return {"status": "ok"}
 
 
+@app.post("/api/estimate-homography")
+async def estimate_homography(
+    polygon: str = Form(...),
+):
+    """
+    Вычислить гомографию (перспективу) из формы полигона.
+    
+    Принимает массив точек полигона, возвращает массив из 4 углов
+    для правильной перспективной трансформации.
+    """
+    try:
+        polygon_parsed = json.loads(polygon)
+        
+        if not isinstance(polygon_parsed, list) or len(polygon_parsed) < 3:
+            raise HTTPException(status_code=400, detail="Polygon must have at least 3 points")
+        
+        # Вычисляем перспективу из формы
+        corners = compute_perspective_from_polygon(polygon_parsed)
+        
+        return {"corners": corners, "method": "homography-estimation"}
+        
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON in polygon")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+def compute_perspective_from_polygon(polygon: list) -> list:
+    """
+    Вычислить перспективные углы из формы полигона.
+    
+    Алгоритм:
+    1. Находим выпуклый четырехугольник (если полигон сложный)
+    2. Определяем "верх" и "низ" по размеру сторон
+    3. Вычисляем перспективную проекцию
+    """
+    if len(polygon) < 3:
+        return polygon
+    
+    # Преобразуем в numpy массив
+    pts = np.array(polygon, dtype=np.float32)
+    
+    if len(polygon) == 3:
+        # Для треугольника - расширяем до четырехугольника
+        # Самая длинная сторона = нижняя (ближе к камере)
+        edges = [
+            (dist(pts[0], pts[1]), [0, 1]),
+            (dist(pts[1], pts[2]), [1, 2]),
+            (dist(pts[2], pts[0]), [2, 0]),
+        ]
+        edges.sort(key=lambda x: x[0], reverse=True)
+        bottom_pair = edges[0][1]
+        
+        p1, p2 = pts[bottom_pair[0]], pts[bottom_pair[1]]
+        mid_bottom = (p1 + p2) / 2
+        height = edges[0][0] * 0.8
+        
+        # Верхняя точка
+        top_point = mid_bottom + np.array([0, -height])
+        
+        # Строим 4 угла
+        new_pts = np.array([
+            top_point + np.array([(p2[0] - p1[0]) * 0.3, 0]),  # top-left
+            top_point + np.array([(p2[0] - p1[0]) * 0.7, 0]),  # top-right (примерно)
+            p2,  # bottom-right
+            p1,  # bottom-left
+        ], dtype=np.float32)
+        
+        pts = new_pts
+    
+    # Для 4+ точек - основной алгоритм
+    # Находим выпуклый четырехугольник
+    hull = cv2.convexHull(pts.astype(np.int32))
+    if len(hull) >= 4:
+        hull_pts = hull[:, 0].astype(np.float32)
+        if len(hull_pts) > 4:
+            hull_pts = hull_pts[:4]
+    else:
+        hull_pts = pts[:4]
+    
+    # Сортируем по часовой стрелке
+    center = np.mean(hull_pts, axis=0)
+    angles = np.arctan2(hull_pts[:, 1] - center[1], hull_pts[:, 0] - center[0])
+    sorted_indices = np.argsort(angles)
+    sorted_pts = hull_pts[sorted_indices]
+    
+    # Теперь sorted_pts[0] - top-left (минимальная сумма координат)
+    # Но нам нужно определить верх/низ
+    
+    # Находим "нижнюю" сторону (самая длинная)
+    edges_len = [
+        dist(sorted_pts[0], sorted_pts[1]),
+        dist(sorted_pts[1], sorted_pts[2]),
+        dist(sorted_pts[2], sorted_pts[3]),
+        dist(sorted_pts[3], sorted_pts[0]),
+    ]
+    
+    # Определяем верхнюю и нижнюю стороны
+    # Если горизонтальные стороны (0-1 и 2-3) длиннее вертикальных
+    horizontal_sum = edges_len[0] + edges_len[2]
+    vertical_sum = edges_len[1] + edges_len[3]
+    
+    if horizontal_sum > vertical_sum:
+        # Горизонтальные стороны - верх и низ
+        bottom_width = edges_len[0]  # bottom edge (0-1)
+        top_width = edges_len[2]     # top edge (2-3)
+        
+        # Если top_width < bottom_width - это нормальная перспектива
+        # Если top_width >= bottom_width - стороны почти параллельны
+        
+        if top_width >= bottom_width * 0.7:
+            # Стороны почти параллельны - возвращаем как есть
+            return sorted_pts.tolist()
+        
+        # Вычисляем перспективные углы
+        # Идея: верхняя сторона должна быть уже (перспектива)
+        perspective_ratio = bottom_width / (top_width + 1e-6)
+        
+        # Центр
+        cx, cy = center
+        
+        # Корректируем верхнюю сторону
+        new_top_left = [
+            sorted_pts[2][0] + (sorted_pts[3][0] - sorted_pts[2][0]) * 0.5 * (1 - 1/perspective_ratio),
+            sorted_pts[2][1] + (sorted_pts[3][1] - sorted_pts[2][1]) * 0.5 * (1 - 1/perspective_ratio)
+        ]
+        new_top_right = [
+            sorted_pts[3][0] + (sorted_pts[2][0] - sorted_pts[3][0]) * 0.5 * (1 - 1/perspective_ratio),
+            sorted_pts[3][1] + (sorted_pts[2][1] - sorted_pts[3][1]) * 0.5 * (1 - 1/perspective_ratio)
+        ]
+        
+        return [
+            [float(new_top_left[0]), float(new_top_left[1])],
+            [float(new_top_right[0]), float(new_top_right[1])],
+            [float(sorted_pts[1][0]), float(sorted_pts[1][1])],
+            [float(sorted_pts[0][0]), float(sorted_pts[0][1])],
+        ]
+    
+    # Для вертикальных сторон - возвращаем как есть
+    return sorted_pts.tolist()
+
+
+def dist(p1, p2):
+    return np.sqrt((p2[0] - p1[0])**2 + (p2[1] - p1[1])**2)
+
+
 @app.post("/api/warp-wall-texture")
 async def warp_wall_texture(
     texture: UploadFile = File(...),

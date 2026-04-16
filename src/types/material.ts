@@ -6,6 +6,8 @@ export type MaterialId = string
 
 export type MaterialCategory = 'vagonka' | 'brus' | 'blockhouse' | 'boards' | 'planken' | 'other'
 
+export type ColorCategory = 'wood' | 'metal' | 'wallpaper' | 'paint'
+
 export interface Texture {
   id: string
   url: string

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { Upload, Home, Building2 } from 'lucide-react'
 import { MAX_PHOTO_SIZE_BYTES, ALLOWED_IMAGE_TYPES } from '@/lib/constants'
 import { detectWalls, detectExterior } from '@/hooks/useWallDetection'
+import { autoLinkPerspectiveToForm } from '@/lib/perspective-helper'
 import { useVisualizerStore } from '@/store/useVisualizerStore'
 import { useWallStore } from '@/store/useWallStore'
 import { useUIStore } from '@/store/useUIStore'
@@ -48,10 +49,28 @@ export function UploadPage() {
           const res = await detectExterior(file)
           useWallStore.getState().setWalls(res.walls ?? [], res.image_size)
           useWallStore.getState().setExteriorMaskBase64(res.masks?.wall_minus_holes ?? null)
+          
+          // Автоматически привязываем перспективу к форме для каждой стены
+          const walls = useWallStore.getState().walls
+          walls.forEach((wall) => {
+            if (wall.polygon && wall.polygon.length >= 3) {
+              const newCorners = autoLinkPerspectiveToForm(wall)
+              useWallStore.getState().updateWallCorners(wall.id, newCorners)
+            }
+          })
         } else {
           const res = await detectWalls(file)
           useWallStore.getState().setWalls(res.walls, res.image_size)
           useWallStore.getState().setExteriorMaskBase64(null)
+          
+          // Для интерьера тоже привязываем перспективу
+          const walls = useWallStore.getState().walls
+          walls.forEach((wall) => {
+            if (wall.polygon && wall.polygon.length >= 3) {
+              const newCorners = autoLinkPerspectiveToForm(wall)
+              useWallStore.getState().updateWallCorners(wall.id, newCorners)
+            }
+          })
         }
 
         navigate('/editor')

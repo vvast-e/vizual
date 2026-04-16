@@ -62,7 +62,9 @@ export async function getPatternCanvas(
   width: number = 512,
   height: number = 512
 ): Promise<HTMLCanvasElement> {
+  console.log('[DEBUG] getPatternCanvas: textureUrl =', textureUrl)
   const img = await loadTextureImage(textureUrl)
+  console.log('[DEBUG] getPatternCanvas: img loaded, size =', img.width, img.height)
   return createPatternCanvas(img, repeat, width, height)
 }
 
@@ -115,7 +117,10 @@ export async function applyPatternToCanvas(
   sceneBounds?: { left: number; top: number; width: number; height: number },
   patternScale: number = 0.25
 ): Promise<Rect> {
+  console.log('[DEBUG] applyPatternToCanvas: textureUrl =', textureUrl)
+  console.log('[DEBUG] applyPatternToCanvas: patternScale =', patternScale)
   const patternCanvas = await getPatternCanvas(textureUrl, repeat)
+  console.log('[DEBUG] applyPatternToCanvas: patternCanvas ready')
   const w = sceneBounds?.width ?? (canvas.width ?? 0)
   const h = sceneBounds?.height ?? (canvas.height ?? 0)
   const scale = Math.max(0.05, Math.min(1, patternScale))

@@ -25,6 +25,45 @@ export interface DetectExteriorResponse {
 }
 
 /**
+ * Запросить автоматический расчет перспективы с бэкенда (Вариант Б)
+ */
+export async function estimateHomographyFromBackend(
+  polygon: [number, number][]
+): Promise<[number, number][]> {
+  const res = await fetch('/api/estimate-homography', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(polygon),
+  })
+  
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status}: ${await res.text()}`)
+  }
+  
+  const data = await res.json()
+  return data.corners
+}
+
+export interface DetectExteriorResponse {
+  walls: WallData[]
+  image_size: { width: number; height: number }
+  masks: {
+    wall: string
+    holes: string
+    wall_minus_holes: string
+  }
+  debug: {
+    building_bbox: number[] | null
+    windows_bboxes: number[][]
+    doors_bboxes: number[][]
+    walls_count: number
+    split_method?: string
+    seam_debug?: Record<string, unknown>
+    split_arbiter?: Record<string, unknown>
+  }
+}
+
+/**
  * Отправляет фото на бэкенд, возвращает определённые стены и размер обработанного изображения.
  * Координаты walls в системе координат image_size (фронт масштабирует под канвас при отрисовке).
  */

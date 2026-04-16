@@ -1,6 +1,7 @@
 import { useWallStore } from '@/store/useWallStore'
 import { useVisualizerStore } from '@/store/useVisualizerStore'
 import { useUIStore } from '@/store/useUIStore'
+import { useMaterialStore } from '@/store/useMaterialStore'
 
 const STORAGE_KEY = 'vizual-state'
 
@@ -79,6 +80,8 @@ export function clearState() {
 }
 
 export function initPersistence() {
+  useMaterialStore.getState().setSelectedMaterial(null)
+  useMaterialStore.getState().setSelectedColor(null)
   useWallStore.subscribe(saveState)
   useVisualizerStore.subscribe(saveState)
 }

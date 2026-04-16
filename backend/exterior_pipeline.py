@@ -13,6 +13,7 @@ import json
 import cv2
 import httpx
 import numpy as np
+from sklearn.cluster import DBSCAN
 
 from facade_geometry import split_gable_roof_polygon
 
@@ -31,6 +32,34 @@ EXTERIOR_OPENINGS_MIN_AREA_PX = int(os.getenv("EXTERIOR_OPENINGS_MIN_AREA_PX", "
 # Saves intermediate PNGs + prints summary to stdout.
 EXTERIOR_DEBUG_SAVE = os.getenv("EXTERIOR_DEBUG_SAVE", "1") in {"1", "true", "TRUE", "yes", "YES"}
 EXTERIOR_POLYGON_EPS_RATIO = float(os.getenv("EXTERIOR_POLYGON_EPS_RATIO", "0.004"))
+EXTERIOR_GEOM_CASCADE_ENABLE = os.getenv("EXTERIOR_GEOM_CASCADE_ENABLE", "1") in {
+    "1",
+    "true",
+    "TRUE",
+    "yes",
+    "YES",
+}
+EXTERIOR_GEOM_DEBUG_LEVEL = str(os.getenv("EXTERIOR_GEOM_DEBUG_LEVEL", "verbose")).strip().lower()
+EXTERIOR_GEOM_DEBUG_SAVE_IMAGES = os.getenv("EXTERIOR_GEOM_DEBUG_SAVE_IMAGES", "1") in {
+    "1",
+    "true",
+    "TRUE",
+    "yes",
+    "YES",
+}
+EXTERIOR_GEOM_DEBUG_SAVE_JSON = os.getenv("EXTERIOR_GEOM_DEBUG_SAVE_JSON", "1") in {
+    "1",
+    "true",
+    "TRUE",
+    "yes",
+    "YES",
+}
+EXTERIOR_GEOM_DEBUG_TOPN = max(5, int(os.getenv("EXTERIOR_GEOM_DEBUG_TOPN", "50")))
+
+EXTERIOR_LSD_MIN_SEG_LEN_PX = int(os.getenv("EXTERIOR_LSD_MIN_SEG_LEN_PX", "40"))
+EXTERIOR_LSD_SAMPLING_POINTS = int(os.getenv("EXTERIOR_LSD_SAMPLING_POINTS", "5"))
+EXTERIOR_LSD_INTERSECTION_NEIGHBOR_RADIUS_PX = int(os.getenv("EXTERIOR_LSD_INTERSECTION_NEIGHBOR_RADIUS_PX", "5"))
+EXTERIOR_LSD_NMS_GAP_RATIO = float(os.getenv("EXTERIOR_LSD_NMS_GAP_RATIO", "0.03"))
 
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.abspath(os.path.join(BACKEND_DIR, ".."))
@@ -193,6 +222,1315 @@ def _filter_opening_bboxes(bboxes: list[list[float]]) -> list[list[float]]:
     return kept
 
 
+def _clean_mask_for_geometry(mask: np.ndarray) -> np.ndarray:
+    """Light denoise for wall geometry preserving macro-boundaries."""
+    out = mask.copy()
+    k_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    k_open = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    out = cv2.morphologyEx(out, cv2.MORPH_CLOSE, k_close, iterations=1)
+    out = cv2.morphologyEx(out, cv2.MORPH_OPEN, k_open, iterations=1)
+    n, lbl, stats, _ = cv2.connectedComponentsWithStats((out > 0).astype(np.uint8), connectivity=8)
+    if n <= 1:
+        return out
+    areas = stats[1:, cv2.CC_STAT_AREA]
+    if areas.size == 0:
+        return out
+    keep_idx = int(np.argmax(areas)) + 1
+    clean = np.zeros_like(out)
+    clean[lbl == keep_idx] = 255
+    return clean
+
+
+def _resample_contour_arc_length(contour: np.ndarray, step_px: float = 3.0) -> np.ndarray:
+    """Uniform contour resampling by arc length."""
+    pts = contour.reshape(-1, 2).astype(np.float64)
+    if len(pts) < 4:
+        return pts.astype(np.float32)
+    d = np.linalg.norm(np.roll(pts, -1, axis=0) - pts, axis=1)
+    per = float(np.sum(d))
+    if per <= 1e-6:
+        return pts.astype(np.float32)
+    step = max(1.0, float(step_px))
+    n_samples = max(16, int(round(per / step)))
+    cum = np.cumsum(np.r_[0.0, d])
+    target = np.linspace(0.0, per, n_samples, endpoint=False)
+    out: list[np.ndarray] = []
+    j = 0
+    for t in target:
+        while j + 1 < len(cum) and cum[j + 1] < t:
+            j += 1
+        a = pts[j % len(pts)]
+        b = pts[(j + 1) % len(pts)]
+        seg = max(1e-6, cum[j + 1] - cum[j])
+        u = float((t - cum[j]) / seg)
+        out.append((1.0 - u) * a + u * b)
+    return np.array(out, dtype=np.float32)
+
+
+def _multi_scale_corner_candidates(mask: np.ndarray) -> list[dict]:
+    """
+    Relative (in-image) corner candidates from multiple approx scales.
+    No fixed tiers: score is rank-based inside current image.
+    """
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return []
+    contour = max(contours, key=cv2.contourArea)
+    if cv2.arcLength(contour, True) < 32:
+        return []
+    rs = _resample_contour_arc_length(contour, step_px=3.0).reshape(-1, 1, 2)
+    per = float(cv2.arcLength(rs, True))
+    h, w = mask.shape[:2]
+    scale_fracs = [0.004, 0.007, 0.011, 0.016, 0.022]
+    grouped: dict[int, dict] = {}
+    for sf in scale_fracs:
+        approx = cv2.approxPolyDP(rs, sf * per, True).reshape(-1, 2).astype(np.float64)
+        n = len(approx)
+        if n < 4:
+            continue
+        for i in range(n):
+            p_prev = approx[(i - 1) % n]
+            p = approx[i]
+            p_next = approx[(i + 1) % n]
+            v1 = p_prev - p
+            v2 = p_next - p
+            n1 = float(np.linalg.norm(v1))
+            n2 = float(np.linalg.norm(v2))
+            if min(n1, n2) < 5.0:
+                continue
+            cos_a = float(np.clip(np.dot(v1, v2) / (n1 * n2), -1.0, 1.0))
+            angle = float(np.degrees(np.arccos(cos_a)))
+            delta = 180.0 - angle
+            x = float(p[0])
+            y = float(p[1])
+            # very edge points are unstable for split
+            if x < 4 or x > (w - 5) or y < 2 or y > (h - 3):
+                continue
+            key = int(round(x / max(6.0, 0.02 * w)))
+            rec = grouped.get(key)
+            if rec is None:
+                grouped[key] = {
+                    "x": x,
+                    "y": y,
+                    "delta_sum": max(0.0, delta),
+                    "scale_hits": 1,
+                    "seg_support": min(n1, n2),
+                }
+            else:
+                rec["x"] = 0.5 * float(rec["x"]) + 0.5 * x
+                rec["y"] = 0.5 * float(rec["y"]) + 0.5 * y
+                rec["delta_sum"] = float(rec["delta_sum"]) + max(0.0, delta)
+                rec["scale_hits"] = int(rec["scale_hits"]) + 1
+                rec["seg_support"] = max(float(rec["seg_support"]), min(n1, n2))
+    out: list[dict] = []
+    if not grouped:
+        return out
+    for g in grouped.values():
+        # Relative score; no absolute thresholding.
+        score = float(g["delta_sum"]) * (1.0 + 0.35 * float(g["scale_hits"])) * (1.0 + 0.01 * float(g["seg_support"]))
+        out.append(
+            {
+                "x": round(float(g["x"]), 2),
+                "y": round(float(g["y"]), 2),
+                "scale_hits": int(g["scale_hits"]),
+                "seg_support": round(float(g["seg_support"]), 2),
+                "score": round(score, 3),
+                "source": "multi_scale_contour",
+            }
+        )
+    out.sort(key=lambda r: float(r["score"]), reverse=True)
+    return out
+
+
+EXTERIOR_LSD_BOTTOM_BAND_RATIO = float(os.getenv("EXTERIOR_LSD_BOTTOM_BAND_RATIO", "0.35"))
+EXTERIOR_LSD_BOTTOM_NEAR_RATIO = float(os.getenv("EXTERIOR_LSD_BOTTOM_NEAR_RATIO", "0.45"))
+EXTERIOR_LSD_XACC_SIGMA_RATIO = float(os.getenv("EXTERIOR_LSD_XACC_SIGMA_RATIO", "0.035"))
+EXTERIOR_LSD_XACC_MIN_PEAK_DIST_RATIO = float(os.getenv("EXTERIOR_LSD_XACC_MIN_PEAK_DIST_RATIO", "0.06"))
+EXTERIOR_LSD_XACC_MIN_PROM_FRAC = float(os.getenv("EXTERIOR_LSD_XACC_MIN_PROM_FRAC", "0.15"))
+EXTERIOR_LSD_XACC_MAX_SPLITS = max(1, int(os.getenv("EXTERIOR_LSD_XACC_MAX_SPLITS", "6")))
+
+
+# ---------------------------------------------------------------------------
+# RGB + LSD corner-detection cascade focused on bottom contour band
+# ---------------------------------------------------------------------------
+
+def _extract_bottom_profile(mask_bin: np.ndarray) -> dict:
+    """Extract top/bottom facade profile per X from a binary mask."""
+    h, w = mask_bin.shape[:2]
+    y_bottom = np.full(w, -1, dtype=np.int32)
+    y_top = np.full(w, -1, dtype=np.int32)
+    valid_xs: list[int] = []
+    for x in range(w):
+        ys = np.where(mask_bin[:, x] > 0)[0]
+        if ys.size == 0:
+            continue
+        valid_xs.append(x)
+        y_top[x] = int(ys[0])
+        y_bottom[x] = int(ys[-1])
+    if not valid_xs:
+        return {"valid": False, "y_bottom": y_bottom, "y_top": y_top}
+    x_min = int(valid_xs[0])
+    x_max = int(valid_xs[-1])
+    facade_h = int(max(1, np.max(y_bottom[valid_xs] - y_top[valid_xs] + 1)))
+    return {
+        "valid": True,
+        "x_min": x_min,
+        "x_max": x_max,
+        "y_bottom": y_bottom,
+        "y_top": y_top,
+        "facade_height": facade_h,
+        "valid_xs": valid_xs,
+    }
+
+
+def _build_bottom_band_mask(mask_bin: np.ndarray, profile: dict, band_ratio: float) -> np.ndarray:
+    """Adaptive lower band: for every X keep only bottom 30-40% of the facade column."""
+    h, w = mask_bin.shape[:2]
+    out = np.zeros((h, w), dtype=np.uint8)
+    if not bool(profile.get("valid")):
+        return out
+    y_bottom = profile["y_bottom"]
+    y_top = profile["y_top"]
+    ratio = float(np.clip(band_ratio, 0.1, 0.8))
+    for x in profile.get("valid_xs", []):
+        yb = int(y_bottom[x])
+        yt = int(y_top[x])
+        col_h = max(1, yb - yt + 1)
+        band_h = max(12, int(round(col_h * ratio)))
+        y0 = max(yt, yb - band_h + 1)
+        out[y0 : yb + 1, x] = 255
+    return cv2.bitwise_and(out, mask_bin)
+
+
+def _lsd_segments_in_bottom_band(
+    image_gray: np.ndarray,
+    band_mask_bin: np.ndarray,
+    profile: dict,
+    near_ratio: float,
+) -> list[dict]:
+    """Detect only stable lower-band segments close to the bottom contour."""
+    h, w = image_gray.shape[:2]
+    masked_gray = cv2.bitwise_and(image_gray, image_gray, mask=(band_mask_bin > 0).astype(np.uint8) * 255)
+    lsd = cv2.createLineSegmentDetector(cv2.LSD_REFINE_ADV)
+    lines_raw, _, _, nfa = lsd.detect(masked_gray)
+    if lines_raw is None or len(lines_raw) == 0:
+        return []
+    y_bottom = profile["y_bottom"]
+    y_top = profile["y_top"]
+    n_sample = max(3, EXTERIOR_LSD_SAMPLING_POINTS)
+    near_ratio = float(np.clip(near_ratio, 0.1, 1.0))
+    segments: list[dict] = []
+    for i in range(len(lines_raw)):
+        x1, y1, x2, y2 = lines_raw[i][0]
+        length = float(np.hypot(x2 - x1, y2 - y1))
+        if length < EXTERIOR_LSD_MIN_SEG_LEN_PX:
+            continue
+        inside_count = 0
+        near_bottom_count = 0
+        bottom_dists: list[float] = []
+        xs_local: list[float] = []
+        ys_local: list[float] = []
+        for t in np.linspace(0.0, 1.0, n_sample):
+            sx_f = float(x1 + t * (x2 - x1))
+            sy_f = float(y1 + t * (y2 - y1))
+            sx = max(0, min(w - 1, int(round(sx_f))))
+            sy = max(0, min(h - 1, int(round(sy_f))))
+            if band_mask_bin[sy, sx] == 0 or y_bottom[sx] < 0 or y_top[sx] < 0:
+                continue
+            inside_count += 1
+            xs_local.append(sx_f)
+            ys_local.append(sy_f)
+            col_h = max(1, int(y_bottom[sx] - y_top[sx] + 1))
+            band_h = max(12, int(round(col_h * EXTERIOR_LSD_BOTTOM_BAND_RATIO)))
+            dist_to_bottom = float(y_bottom[sx] - sy_f)
+            bottom_dists.append(dist_to_bottom)
+            if dist_to_bottom <= near_ratio * band_h:
+                near_bottom_count += 1
+        if inside_count < max(3, n_sample - 1):
+            continue
+        if near_bottom_count < max(2, int(np.ceil(0.6 * inside_count))):
+            continue
+        theta = float(np.arctan2(y2 - y1, x2 - x1))
+        segments.append(
+            {
+                "x1": float(x1),
+                "y1": float(y1),
+                "x2": float(x2),
+                "y2": float(y2),
+                "length": length,
+                "theta": theta,
+                "nfa": float(nfa[i][0]) if nfa is not None else 0.0,
+                "inside_count": int(inside_count),
+                "near_bottom_count": int(near_bottom_count),
+                "bottom_dist_mean": round(float(np.mean(bottom_dists)) if bottom_dists else 0.0, 2),
+                "y_mean": round(float(np.mean(ys_local)) if ys_local else 0.0, 2),
+            }
+        )
+    return segments
+
+
+def _cluster_orientation_labels(segments: list[dict], eps_angle_deg: float) -> list[list[dict]]:
+    """Cluster bottom-band segments by orientation using doubled-angle features."""
+    if len(segments) < 2:
+        return []
+    thetas = np.array([s["theta"] for s in segments], dtype=np.float64)
+    features = np.column_stack([np.cos(2.0 * thetas), np.sin(2.0 * thetas)])
+    eps_dist = 2.0 * np.sin(np.radians(eps_angle_deg))
+    clustering = DBSCAN(eps=eps_dist, min_samples=2, metric="euclidean").fit(features)
+    labels = clustering.labels_
+    unique_labels = sorted(set(labels) - {-1})
+    clusters: list[list[dict]] = []
+    for lbl in unique_labels:
+        group = [segments[i] for i in range(len(segments)) if labels[i] == lbl]
+        if len(group) >= 2:
+            clusters.append(group)
+    clusters.sort(key=lambda grp: sum(float(s["length"]) for s in grp), reverse=True)
+    return clusters
+
+
+def _segment_line_abc(seg: dict) -> tuple[float, float, float] | None:
+    x1 = float(seg["x1"])
+    y1 = float(seg["y1"])
+    x2 = float(seg["x2"])
+    y2 = float(seg["y2"])
+    a = y2 - y1
+    b = x1 - x2
+    c = x2 * y1 - x1 * y2
+    norm = float(np.sqrt(a * a + b * b))
+    if norm < 1e-8:
+        return None
+    return a / norm, b / norm, c / norm
+
+
+def _split_segments_horizontal_vertical(segments: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Split lower-band LSD segments into horizontal/vertical buckets."""
+    horizontals: list[dict] = []
+    verticals: list[dict] = []
+    for s in segments:
+        theta = float(np.degrees(float(s["theta"])))
+        theta = ((theta + 180.0) % 180.0)
+        # Perspective tolerant ranges
+        if theta <= 28.0 or theta >= 152.0:
+            horizontals.append(s)
+        elif 62.0 <= theta <= 118.0:
+            verticals.append(s)
+    return horizontals, verticals
+
+
+def _build_vertical_x_accumulator(vert_segments: list[dict], image_width: int) -> dict:
+    """Build weighted 1D x-accumulator from vertical segment support."""
+    width = int(max(1, image_width))
+    raw_acc = np.zeros((width,), dtype=np.float64)
+    support_by_x = np.zeros((width,), dtype=np.float64)
+    total_support = 0.0
+    for seg in vert_segments:
+        x1 = float(seg["x1"])
+        x2 = float(seg["x2"])
+        w = max(1.0, float(seg.get("length", 0.0)))
+        total_support += w
+        lx = int(np.clip(np.floor(min(x1, x2)), 0, width - 1))
+        rx = int(np.clip(np.ceil(max(x1, x2)), 0, width - 1))
+        if rx < lx:
+            lx, rx = rx, lx
+        raw_acc[lx : rx + 1] += w
+        support_by_x[lx : rx + 1] += 1.0
+    return {
+        "raw_acc": raw_acc,
+        "support_by_x": support_by_x,
+        "total_support": float(total_support),
+    }
+
+
+def _smooth_x_accumulator(raw_acc: np.ndarray, sigma_px: float) -> np.ndarray:
+    """Smooth 1D x-accumulator with Gaussian kernel."""
+    if raw_acc.size == 0:
+        return raw_acc
+    sigma = float(max(1.0, sigma_px))
+    # cv2 Gaussian expects odd kernel size.
+    k = int(max(3, 2 * round(3.0 * sigma) + 1))
+    if k % 2 == 0:
+        k += 1
+    arr = raw_acc.reshape(1, -1).astype(np.float32)
+    out = cv2.GaussianBlur(arr, (k, 1), sigmaX=sigma, sigmaY=0)
+    return out.reshape(-1).astype(np.float64)
+
+
+def _detect_x_peaks(acc_smooth: np.ndarray, min_dist_px: int, min_prom_abs: float) -> list[dict]:
+    """Detect local maxima in smoothed x-accumulator with prominence filter."""
+    n = int(acc_smooth.size)
+    if n < 3:
+        return []
+    peaks: list[dict] = []
+    min_dist = max(1, int(min_dist_px))
+    min_prom = float(max(1e-6, min_prom_abs))
+    for x in range(1, n - 1):
+        v = float(acc_smooth[x])
+        if not (v >= float(acc_smooth[x - 1]) and v > float(acc_smooth[x + 1])):
+            continue
+        li = x - 1
+        while li > 0 and float(acc_smooth[li - 1]) <= float(acc_smooth[li]):
+            li -= 1
+        ri = x + 1
+        while ri < n - 1 and float(acc_smooth[ri + 1]) <= float(acc_smooth[ri]):
+            ri += 1
+        base = max(float(acc_smooth[li]), float(acc_smooth[ri]))
+        prom = max(0.0, v - base)
+        if prom < min_prom:
+            continue
+        peaks.append(
+            {
+                "x": int(x),
+                "height": float(v),
+                "prominence": float(prom),
+                "left_base": int(li),
+                "right_base": int(ri),
+            }
+        )
+    peaks.sort(key=lambda p: float(p["prominence"]), reverse=True)
+    kept: list[dict] = []
+    for p in peaks:
+        px = int(p["x"])
+        if any(abs(px - int(k["x"])) < min_dist for k in kept):
+            continue
+        kept.append(p)
+    kept.sort(key=lambda p: int(p["x"]))
+    return kept
+
+
+def _peaks_to_split_candidates(
+    peaks: list[dict],
+    acc_smooth: np.ndarray,
+    image_width: int,
+    wall_mask_bin: np.ndarray,
+    total_support: float,
+) -> tuple[list[float], list[dict]]:
+    """Convert x-peaks to split candidates and keep per-peak diagnostics."""
+    if not peaks:
+        return [], []
+    w = int(max(1, image_width))
+    max_val = float(np.max(acc_smooth)) if acc_smooth.size > 0 else 0.0
+    min_height_abs = float(max(1e-6, 0.10 * max_val))
+    min_prom_abs = float(max(1e-6, 0.08 * max_val))
+    xs: list[float] = []
+    diag: list[dict] = []
+    for p in peaks:
+        x = int(np.clip(int(p["x"]), 0, w - 1))
+        h = float(p["height"])
+        prom = float(p["prominence"])
+        support_ratio = float(h / max(max_val, 1e-6))
+        if h < min_height_abs:
+            continue
+        if prom < min_prom_abs:
+            continue
+        ys = np.where(wall_mask_bin[:, x] > 0)[0]
+        if ys.size == 0:
+            continue
+        xs.append(float(x))
+        diag.append(
+            {
+                "x": int(x),
+                "height": round(h, 3),
+                "prominence": round(prom, 3),
+                "support_ratio": round(support_ratio, 4),
+                "left_base": int(p["left_base"]),
+                "right_base": int(p["right_base"]),
+            }
+        )
+    xs = _nms_unique_x_candidates(xs, image_width)
+    if len(xs) > EXTERIOR_LSD_XACC_MAX_SPLITS:
+        xs = xs[:EXTERIOR_LSD_XACC_MAX_SPLITS]
+    return xs, diag
+
+
+def _group_segments_by_formula(segments: list[dict], axis: str, image_width: int) -> list[list[dict]]:
+    """
+    Group segments by similar line representation.
+    - axis='h': group by c in ax+by+c=0 (horizontal levels)
+    - axis='v': group by x-mid (vertical families)
+    """
+    items: list[dict] = []
+    for s in segments:
+        abc = _segment_line_abc(s)
+        if abc is None:
+            continue
+        a, b, c = abc
+        x_mid = 0.5 * (float(s["x1"]) + float(s["x2"]))
+        y_mid = 0.5 * (float(s["y1"]) + float(s["y2"]))
+        items.append({"seg": s, "a": a, "b": b, "c": c, "x_mid": x_mid, "y_mid": y_mid})
+    if not items:
+        return []
+    if axis == "h":
+        items.sort(key=lambda r: float(r["c"]))
+        gap_thr = max(8.0, 0.02 * float(image_width))
+    else:
+        items.sort(key=lambda r: float(r["x_mid"]))
+        # Vertical clusters were over-merged by chain-neighbor logic.
+        # Keep tighter threshold and cluster around group centroid.
+        gap_thr = max(8.0, 0.012 * float(image_width))
+
+    groups: list[list[dict]] = []
+    if axis == "h":
+        cur: list[dict] = [items[0]]
+        for rec in items[1:]:
+            prev = cur[-1]
+            gap = abs(float(rec["c"]) - float(prev["c"]))
+            if gap <= gap_thr:
+                cur.append(rec)
+            else:
+                groups.append(cur)
+                cur = [rec]
+        groups.append(cur)
+    else:
+        # Centroid-based 1D clustering to avoid transitive over-merge.
+        for rec in items:
+            x = float(rec["x_mid"])
+            best_idx = -1
+            best_d = 1e18
+            for gi, g in enumerate(groups):
+                gx = float(np.mean([float(r["x_mid"]) for r in g]))
+                d = abs(x - gx)
+                if d < best_d:
+                    best_d = d
+                    best_idx = gi
+            if best_idx >= 0 and best_d <= gap_thr:
+                groups[best_idx].append(rec)
+            else:
+                groups.append([rec])
+
+        # Merge only truly close centroids (single-pass), no chaining.
+        groups.sort(key=lambda g: float(np.mean([float(r["x_mid"]) for r in g])))
+        merged: list[list[dict]] = []
+        for g in groups:
+            if not merged:
+                merged.append(g)
+                continue
+            gxc = float(np.mean([float(r["x_mid"]) for r in g]))
+            mxc = float(np.mean([float(r["x_mid"]) for r in merged[-1]]))
+            if abs(gxc - mxc) <= 0.6 * gap_thr:
+                merged[-1].extend(g)
+            else:
+                merged.append(g)
+        groups = merged
+
+    out: list[list[dict]] = []
+    for g in groups:
+        min_group = 1 if axis == "v" else 2
+        if len(g) < min_group:
+            continue
+        out.append([r["seg"] for r in g])
+    return out
+
+
+def _line_intersection(line1: dict, line2: dict) -> tuple[float, float] | None:
+    a1, b1, c1 = float(line1["a"]), float(line1["b"]), float(line1["c"])
+    a2, b2, c2 = float(line2["a"]), float(line2["b"]), float(line2["c"])
+    denom = a1 * b2 - a2 * b1
+    if abs(denom) < 1e-6:
+        return None
+    x = (b1 * c2 - b2 * c1) / denom
+    y = (a2 * c1 - a1 * c2) / denom
+    return float(x), float(y)
+
+
+def _build_planes_from_direction_families(
+    families: list[list[dict]],
+    image_width: int,
+) -> tuple[list[dict], dict]:
+    """
+    Build planes from V-H pairs in lower contour zone.
+    Vertical groups are paired with nearest horizontal groups.
+    """
+    build_dbg: dict = {
+        "input_families": int(len(families)),
+        "input_segments_total": int(sum(len(f) for f in families)),
+        "horiz_segments_total": 0,
+        "vert_segments_total": 0,
+        "horiz_groups_total": 0,
+        "vert_groups_total": 0,
+        "horiz_groups_kept": 0,
+        "vert_groups_kept": 0,
+        "h_lines_total": 0,
+        "v_lines_total": 0,
+        "pairing_attempts": 0,
+        "pairing_no_horizontal": 0,
+        "pairing_no_anchor": 0,
+        "pairing_built": 0,
+    }
+
+    all_segments = [s for fam in families for s in fam]
+    horiz_segments, vert_segments = _split_segments_horizontal_vertical(all_segments)
+    build_dbg["horiz_segments_total"] = int(len(horiz_segments))
+    build_dbg["vert_segments_total"] = int(len(vert_segments))
+    horiz_groups = _group_segments_by_formula(horiz_segments, axis="h", image_width=image_width)
+    vert_groups = _group_segments_by_formula(vert_segments, axis="v", image_width=image_width)
+    build_dbg["horiz_groups_kept"] = int(len(horiz_groups))
+    build_dbg["vert_groups_kept"] = int(len(vert_groups))
+    build_dbg["horiz_groups_total"] = int(len(horiz_groups))
+    build_dbg["vert_groups_total"] = int(len(vert_groups))
+
+    h_lines: list[dict] = []
+    for grp in horiz_groups:
+        ln = _fit_line_from_cluster_endpoints(grp)
+        if ln is None:
+            continue
+        y_vals = [0.5 * (float(s["y1"]) + float(s["y2"])) for s in grp]
+        h_lines.append(
+            {
+                "line": ln,
+                "segments": grp,
+                "n_segments": len(grp),
+                "support": float(sum(float(s["length"]) for s in grp)),
+                "y_center": float(np.mean(y_vals)) if y_vals else 0.0,
+            }
+        )
+    build_dbg["h_lines_total"] = int(len(h_lines))
+
+    v_lines: list[dict] = []
+    for grp in vert_groups:
+        ln = _fit_line_from_cluster_endpoints(grp)
+        if ln is None:
+            continue
+        x_vals = [0.5 * (float(s["x1"]) + float(s["x2"])) for s in grp]
+        v_lines.append(
+            {
+                "line": ln,
+                "segments": grp,
+                "n_segments": len(grp),
+                "support": float(sum(float(s["length"]) for s in grp)),
+                "x_center": float(np.mean(x_vals)) if x_vals else 0.0,
+            }
+        )
+    build_dbg["v_lines_total"] = int(len(v_lines))
+
+    planes: list[dict] = []
+    plane_id = 0
+    for v in v_lines:
+        build_dbg["pairing_attempts"] = int(build_dbg["pairing_attempts"]) + 1
+        x_ref = float(v.get("x_center", 0.0))
+        best_h: dict | None = None
+        best_d = 1e18
+        for h in h_lines:
+            inter = _line_intersection(v["line"], h["line"])
+            if inter is None:
+                continue
+            d = abs(float(inter[0]) - x_ref)
+            if d < best_d:
+                best_d = d
+                best_h = h
+        if best_h is None:
+            build_dbg["pairing_no_horizontal"] = int(build_dbg["pairing_no_horizontal"]) + 1
+            continue
+        anchor = _line_intersection(v["line"], best_h["line"])
+        if anchor is None:
+            build_dbg["pairing_no_anchor"] = int(build_dbg["pairing_no_anchor"]) + 1
+            continue
+        plane_id += 1
+        planes.append(
+            {
+                "id": int(plane_id),
+                "family_id": int(plane_id),  # unique id for compatibility
+                "vertical_line": v["line"],
+                "horizontal_line": best_h["line"],
+                "line": v["line"],  # overlay compatibility
+                "n_segments": int(v["n_segments"] + best_h["n_segments"]),
+                "support": float(v["support"] + best_h["support"]),
+                "x_center": float(v.get("x_center", 0.0)),
+                "y_center": float(best_h.get("y_center", 0.0)),
+                "anchor": {"x": float(anchor[0]), "y": float(anchor[1])},
+            }
+        )
+        build_dbg["pairing_built"] = int(build_dbg["pairing_built"]) + 1
+    planes.sort(key=lambda p: float(p["support"]), reverse=True)
+    build_dbg["planes_total"] = int(len(planes))
+    return planes, build_dbg
+
+
+def _line_direction_from_abc(a: float, b: float) -> np.ndarray:
+    """Direction vector of line ax + by + c = 0."""
+    v = np.array([b, -a], dtype=np.float64)
+    n = float(np.linalg.norm(v))
+    if n < 1e-8:
+        return np.array([1.0, 0.0], dtype=np.float64)
+    return v / n
+
+
+def _canonical_line_abc(line: dict) -> dict:
+    """Normalize ax+by+c=0 and fix sign for stable comparisons."""
+    a = float(line["a"])
+    b = float(line["b"])
+    c = float(line["c"])
+    n = float(np.sqrt(a * a + b * b))
+    if n < 1e-8:
+        return {"a": 1.0, "b": 0.0, "c": 0.0}
+    a /= n
+    b /= n
+    c /= n
+    if a < 0.0 or (abs(a) <= 1e-9 and b < 0.0):
+        a, b, c = -a, -b, -c
+    return {"a": float(a), "b": float(b), "c": float(c)}
+
+
+def _line_angle_delta_deg(line1: dict, line2: dict) -> float:
+    d1 = _line_direction_from_abc(float(line1["a"]), float(line1["b"]))
+    d2 = _line_direction_from_abc(float(line2["a"]), float(line2["b"]))
+    cos_a = float(abs(np.clip(np.dot(d1, d2), -1.0, 1.0)))
+    return float(np.degrees(np.arccos(cos_a)))
+
+
+def _line_parallel_dist(line1: dict, line2: dict) -> float:
+    """For near-parallel normalized lines, |c1-c2| approximates spacing."""
+    c1 = float(_canonical_line_abc(line1)["c"])
+    c2 = float(_canonical_line_abc(line2)["c"])
+    return abs(c1 - c2)
+
+
+def _anchor_distance(p1: dict, p2: dict) -> float:
+    return float(np.hypot(float(p1["x"]) - float(p2["x"]), float(p1["y"]) - float(p2["y"])))
+
+
+def _plane_duplicate(
+    p1: dict,
+    p2: dict,
+    image_width: int,
+    image_height: int,
+) -> tuple[bool, dict]:
+    """Rule-based duplicate check for planes built from (V,H) pairs."""
+    v1 = p1.get("vertical_line")
+    v2 = p2.get("vertical_line")
+    h1 = p1.get("horizontal_line")
+    h2 = p2.get("horizontal_line")
+    a1 = p1.get("anchor")
+    a2 = p2.get("anchor")
+    if v1 is None or v2 is None or h1 is None or h2 is None or a1 is None or a2 is None:
+        return False, {"reason": "missing_components"}
+
+    v_angle = _line_angle_delta_deg(v1, v2)
+    h_angle = _line_angle_delta_deg(h1, h2)
+    v_dist = _line_parallel_dist(v1, v2)
+    h_dist = _line_parallel_dist(h1, h2)
+    anc_dist = _anchor_distance(a1, a2)
+
+    tau_v_angle = 8.0
+    tau_h_angle = 12.0
+    tau_v_dist = max(6.0, 0.014 * float(image_width))
+    tau_h_dist = max(8.0, 0.016 * float(image_height))
+    tau_anchor = max(16.0, 0.03 * float(max(image_width, image_height)))
+    tau_x_center = max(14.0, 0.028 * float(image_width))
+    x_center_dist = abs(float(p1.get("x_center", 0.0)) - float(p2.get("x_center", 0.0)))
+
+    # Anchor is unstable (paired with different horizontal lines), so it is soft.
+    core_similar = (
+        v_angle <= tau_v_angle
+        and v_dist <= tau_v_dist
+        and x_center_dist <= tau_x_center
+    )
+    horiz_compatible = (h_angle <= tau_h_angle and h_dist <= tau_h_dist)
+    anchor_compatible = anc_dist <= tau_anchor
+    is_dup = core_similar and (horiz_compatible or anchor_compatible)
+    return is_dup, {
+        "v_angle": round(v_angle, 3),
+        "h_angle": round(h_angle, 3),
+        "v_dist": round(v_dist, 3),
+        "h_dist": round(h_dist, 3),
+        "anchor_dist": round(anc_dist, 3),
+        "tau_v_angle": tau_v_angle,
+        "tau_h_angle": tau_h_angle,
+        "tau_v_dist": round(tau_v_dist, 3),
+        "tau_h_dist": round(tau_h_dist, 3),
+        "tau_anchor": round(tau_anchor, 3),
+        "x_center_dist": round(x_center_dist, 3),
+        "tau_x_center": round(tau_x_center, 3),
+        "core_similar": bool(core_similar),
+        "horiz_compatible": bool(horiz_compatible),
+        "anchor_compatible": bool(anchor_compatible),
+    }
+
+
+def _merge_similar_planes(
+    raw_planes: list[dict],
+    image_width: int,
+    image_height: int,
+) -> tuple[list[dict], dict]:
+    """Cluster duplicate planes and merge each cluster into one canonical plane."""
+    dbg: dict = {
+        "raw_total": int(len(raw_planes)),
+        "clusters_total": 0,
+        "removed_duplicates": 0,
+        "merge_clusters": [],
+        "pair_checks": 0,
+    }
+    if not raw_planes:
+        return [], dbg
+
+    # 1) Pre-cluster by vertical plane signature to avoid fragmented duplicates.
+    pre_items: list[dict] = []
+    for idx, p in enumerate(raw_planes):
+        v = _canonical_line_abc(p["vertical_line"])
+        pre_items.append(
+            {
+                "idx": idx,
+                "x": float(p.get("x_center", 0.0)),
+                "c": float(v["c"]),
+            }
+        )
+    pre_items.sort(key=lambda r: r["x"])
+    pre_clusters: list[list[int]] = []
+    x_thr = max(16.0, 0.03 * float(image_width))
+    c_thr = max(8.0, 0.014 * float(image_width))
+    cur: list[int] = []
+    cur_x = 0.0
+    cur_c = 0.0
+    for rec in pre_items:
+        if not cur:
+            cur = [int(rec["idx"])]
+            cur_x = float(rec["x"])
+            cur_c = float(rec["c"])
+            continue
+        if abs(float(rec["x"]) - cur_x) <= x_thr and abs(float(rec["c"]) - cur_c) <= c_thr:
+            cur.append(int(rec["idx"]))
+            cur_x = float(np.mean([float(raw_planes[i].get("x_center", 0.0)) for i in cur]))
+            cur_c = float(np.mean([float(_canonical_line_abc(raw_planes[i]["vertical_line"])["c"]) for i in cur]))
+        else:
+            pre_clusters.append(cur)
+            cur = [int(rec["idx"])]
+            cur_x = float(rec["x"])
+            cur_c = float(rec["c"])
+    if cur:
+        pre_clusters.append(cur)
+
+    # 2) Refine each pre-cluster by duplicate predicate (union-find style BFS).
+    clusters: list[list[int]] = []
+    for pre in pre_clusters:
+        visited_local: set[int] = set()
+        for i in pre:
+            if i in visited_local:
+                continue
+            queue = [i]
+            visited_local.add(i)
+            comp = [i]
+            while queue:
+                u = queue.pop()
+                for v in pre:
+                    if v in visited_local:
+                        continue
+                    dbg["pair_checks"] = int(dbg["pair_checks"]) + 1
+                    dup, _ = _plane_duplicate(raw_planes[u], raw_planes[v], image_width, image_height)
+                    if dup:
+                        visited_local.add(v)
+                        queue.append(v)
+                        comp.append(v)
+            clusters.append(comp)
+
+    merged: list[dict] = []
+    for cid, ids in enumerate(clusters, start=1):
+        pls = [raw_planes[i] for i in ids]
+        weights = np.array([max(1e-6, float(p.get("support", 1.0))) for p in pls], dtype=np.float64)
+        wsum = float(np.sum(weights))
+        if wsum <= 1e-9:
+            weights = np.ones(len(pls), dtype=np.float64)
+            wsum = float(len(pls))
+
+        def _weighted_line(key: str) -> dict:
+            canon = [_canonical_line_abc(p[key]) for p in pls]
+            a = float(np.sum([canon[k]["a"] * weights[k] for k in range(len(pls))]) / wsum)
+            b = float(np.sum([canon[k]["b"] * weights[k] for k in range(len(pls))]) / wsum)
+            c = float(np.sum([canon[k]["c"] * weights[k] for k in range(len(pls))]) / wsum)
+            return _canonical_line_abc({"a": a, "b": b, "c": c})
+
+        anchors_x = np.array([float(p["anchor"]["x"]) for p in pls], dtype=np.float64)
+        anchors_y = np.array([float(p["anchor"]["y"]) for p in pls], dtype=np.float64)
+        anchor = {
+            "x": float(np.sum(anchors_x * weights) / wsum),
+            "y": float(np.sum(anchors_y * weights) / wsum),
+        }
+
+        v_line = _weighted_line("vertical_line")
+        h_line = _weighted_line("horizontal_line")
+        merged.append(
+            {
+                "id": int(cid),
+                "family_id": int(cid),
+                "vertical_line": v_line,
+                "horizontal_line": h_line,
+                "line": v_line,
+                "anchor": anchor,
+                "support": float(np.sum([float(p.get("support", 0.0)) for p in pls])),
+                "n_segments": int(np.sum([int(p.get("n_segments", 0)) for p in pls])),
+                "x_center": float(np.sum([float(p.get("x_center", 0.0)) * weights[k] for k, p in enumerate(pls)]) / wsum),
+                "y_center": float(np.sum([float(p.get("y_center", 0.0)) * weights[k] for k, p in enumerate(pls)]) / wsum),
+                "raw_plane_ids": [int(raw_planes[i].get("id", i + 1)) for i in ids],
+                "raw_count": int(len(ids)),
+            }
+        )
+        dbg["merge_clusters"].append(
+            {
+                "cluster_id": int(cid),
+                "raw_ids": [int(raw_planes[i].get("id", i + 1)) for i in ids],
+                "raw_count": int(len(ids)),
+            }
+        )
+
+    # Secondary pass: merge planes still close in vertical signature.
+    if len(merged) > 1:
+        merged.sort(key=lambda p: float(p.get("x_center", 0.0)))
+        second_clusters: list[list[dict]] = []
+        x_thr2 = max(18.0, 0.035 * float(image_width))
+        c_thr2 = max(10.0, 0.016 * float(image_width))
+        for p in merged:
+            if not second_clusters:
+                second_clusters.append([p])
+                continue
+            last = second_clusters[-1][-1]
+            dx = abs(float(p.get("x_center", 0.0)) - float(last.get("x_center", 0.0)))
+            cv = abs(
+                float(_canonical_line_abc(p["vertical_line"])["c"])
+                - float(_canonical_line_abc(last["vertical_line"])["c"])
+            )
+            if dx <= x_thr2 and cv <= c_thr2:
+                dup, _ = _plane_duplicate(last, p, image_width, image_height)
+                if dup:
+                    second_clusters[-1].append(p)
+                    continue
+            second_clusters.append([p])
+
+        if len(second_clusters) != len(merged):
+            rem2: list[dict] = []
+            for cid, grp in enumerate(second_clusters, start=1):
+                if len(grp) == 1:
+                    item = grp[0].copy()
+                    item["id"] = int(cid)
+                    item["family_id"] = int(cid)
+                    rem2.append(item)
+                    continue
+                weights = np.array([max(1e-6, float(g.get("support", 1.0))) for g in grp], dtype=np.float64)
+                wsum = float(np.sum(weights))
+                if wsum <= 1e-9:
+                    weights = np.ones(len(grp), dtype=np.float64)
+                    wsum = float(len(grp))
+
+                def _merge_line(key: str) -> dict:
+                    cls = [_canonical_line_abc(g[key]) for g in grp]
+                    a = float(np.sum([cls[k]["a"] * weights[k] for k in range(len(grp))]) / wsum)
+                    b = float(np.sum([cls[k]["b"] * weights[k] for k in range(len(grp))]) / wsum)
+                    c = float(np.sum([cls[k]["c"] * weights[k] for k in range(len(grp))]) / wsum)
+                    return _canonical_line_abc({"a": a, "b": b, "c": c})
+
+                anchor_x = float(np.sum([float(g["anchor"]["x"]) * weights[k] for k, g in enumerate(grp)]) / wsum)
+                anchor_y = float(np.sum([float(g["anchor"]["y"]) * weights[k] for k, g in enumerate(grp)]) / wsum)
+                rem2.append(
+                    {
+                        "id": int(cid),
+                        "family_id": int(cid),
+                        "vertical_line": _merge_line("vertical_line"),
+                        "horizontal_line": _merge_line("horizontal_line"),
+                        "line": _merge_line("vertical_line"),
+                        "anchor": {"x": anchor_x, "y": anchor_y},
+                        "support": float(np.sum([float(g.get("support", 0.0)) for g in grp])),
+                        "n_segments": int(np.sum([int(g.get("n_segments", 0)) for g in grp])),
+                        "x_center": float(np.sum([float(g.get("x_center", 0.0)) * weights[k] for k, g in enumerate(grp)]) / wsum),
+                        "y_center": float(np.sum([float(g.get("y_center", 0.0)) * weights[k] for k, g in enumerate(grp)]) / wsum),
+                        "raw_plane_ids": [rid for g in grp for rid in (g.get("raw_plane_ids") or [int(g.get("id", 0))])],
+                        "raw_count": int(np.sum([int(g.get("raw_count", 1)) for g in grp])),
+                    }
+                )
+            dbg["secondary_merge_clusters_total"] = int(len(second_clusters))
+            dbg["secondary_removed"] = int(len(merged) - len(rem2))
+            merged = rem2
+        else:
+            dbg["secondary_merge_clusters_total"] = int(len(second_clusters))
+            dbg["secondary_removed"] = 0
+
+    dbg["clusters_total"] = int(len(clusters))
+    dbg["removed_duplicates"] = int(len(raw_planes) - len(merged))
+    dbg["merged_total"] = int(len(merged))
+    return merged, dbg
+
+
+def _dedupe_intersections(points: list[dict], image_width: int, image_height: int) -> tuple[list[dict], dict]:
+    """Spatial NMS for intersection points."""
+    dbg = {"raw_total": int(len(points)), "dedup_total": 0, "removed": 0}
+    if not points:
+        return [], dbg
+    gap = max(8.0, 0.015 * float(max(image_width, image_height)))
+    out: list[dict] = []
+    for p in sorted(points, key=lambda r: float(r.get("roi_ratio", 0.0)), reverse=True):
+        x = float(p["x"])
+        y = float(p["y"])
+        if any(abs(x - float(q["x"])) < gap and abs(y - float(q["y"])) < gap for q in out):
+            continue
+        out.append(p)
+    dbg["dedup_total"] = int(len(out))
+    dbg["removed"] = int(len(points) - len(out))
+    return out, dbg
+
+
+def _intersections_from_planes(
+    planes: list[dict],
+    band_mask_bin: np.ndarray,
+    image_width: int,
+    image_height: int,
+    neighbor_radius: int,
+) -> tuple[list[dict], int]:
+    """Find intersections between planes built from V-H pairs."""
+    h, w = band_mask_bin.shape[:2]
+    results: list[dict] = []
+    pairs_checked = 0
+    ordered = sorted(planes, key=lambda p: float(p.get("x_center", 0.0)))
+    # Intersect only neighboring planes by x-order to avoid combinatorial duplicates.
+    for i in range(len(ordered) - 1):
+        for j in (i + 1,):
+            p1 = ordered[i]
+            p2 = ordered[j]
+            v1 = p1.get("vertical_line")
+            h1_line = p1.get("horizontal_line")
+            v2 = p2.get("vertical_line")
+            h2_line = p2.get("horizontal_line")
+            if v1 is None or h1_line is None or v2 is None or h2_line is None:
+                continue
+            pairs_checked += 1
+            cross_points = [
+                _line_intersection(v1, h2_line),
+                _line_intersection(v2, h1_line),
+                _line_intersection(v1, v2),
+            ]
+            for pt in cross_points:
+                if pt is None:
+                    continue
+                x, y = pt
+                if not (0 <= x < image_width and 0 <= y < image_height):
+                    continue
+                r = max(1, int(neighbor_radius))
+                x0 = max(0, int(round(x)) - r)
+                y0 = max(0, int(round(y)) - r)
+                x1c = min(w, int(round(x)) + r + 1)
+                y1c = min(h, int(round(y)) + r + 1)
+                patch = band_mask_bin[y0:y1c, x0:x1c]
+                roi_ratio = float(np.count_nonzero(patch)) / max(1, patch.size)
+                if roi_ratio < 0.06:
+                    continue
+                results.append(
+                    {
+                        "x": float(x),
+                        "y": float(y),
+                        "plane_i": int(p1["id"]),
+                        "plane_j": int(p2["id"]),
+                        "family_i": int(p1["family_id"]),
+                        "family_j": int(p2["family_id"]),
+                        "angle": 90.0,
+                        "roi_ratio": round(float(roi_ratio), 3),
+                    }
+                )
+    return results, pairs_checked
+
+
+def _fit_line_from_cluster_endpoints(cluster_segments: list[dict]) -> dict | None:
+    """Fit one support line to a merged lower-band segment cluster."""
+    if len(cluster_segments) == 1:
+        s = cluster_segments[0]
+        abc = _segment_line_abc(s)
+        if abc is None:
+            return None
+        a, b, c = abc
+        return {
+            "a": float(a),
+            "b": float(b),
+            "c": float(c),
+            "support": float(s.get("length", 0.0)),
+            "n_segments": 1,
+            "y_mean": round(0.5 * (float(s["y1"]) + float(s["y2"])), 2),
+        }
+
+    pts = np.array(
+        [[s["x1"], s["y1"]] for s in cluster_segments] + [[s["x2"], s["y2"]] for s in cluster_segments],
+        dtype=np.float32,
+    )
+    if len(pts) < 4:
+        return None
+    vx, vy, x0, y0 = cv2.fitLine(pts, cv2.DIST_L2, 0, 0.01, 0.01)
+    a = float(vy[0])
+    b = float(-vx[0])
+    c = float(vx[0] * y0[0] - vy[0] * x0[0])
+    norm = float(np.sqrt(a * a + b * b))
+    if norm < 1e-8:
+        return None
+    a /= norm
+    b /= norm
+    c /= norm
+    support = sum(float(s["length"]) for s in cluster_segments)
+    return {
+        "a": a,
+        "b": b,
+        "c": c,
+        "support": float(support),
+        "n_segments": len(cluster_segments),
+        "y_mean": round(float(np.mean([float(s.get("y_mean", 0.0)) for s in cluster_segments])), 2),
+    }
+
+
+def _intersections_from_lines(
+    wall_lines: list[dict],
+    band_mask_bin: np.ndarray,
+    image_width: int,
+    image_height: int,
+    neighbor_radius: int,
+) -> list[dict]:
+    """Find intersections between lower-band support lines."""
+    h, w = band_mask_bin.shape[:2]
+    results: list[dict] = []
+    for i in range(len(wall_lines)):
+        for j in range(i + 1, len(wall_lines)):
+            l1 = wall_lines[i]
+            l2 = wall_lines[j]
+            denom = l1["a"] * l2["b"] - l2["a"] * l1["b"]
+            if abs(denom) < 1e-6:
+                continue
+            x = (l1["b"] * l2["c"] - l2["b"] * l1["c"]) / denom
+            y = (l2["a"] * l1["c"] - l1["a"] * l2["c"]) / denom
+            if not (0 <= x < image_width and 0 <= y < image_height):
+                continue
+            r = max(1, neighbor_radius)
+            x0 = max(0, int(round(x)) - r)
+            y0 = max(0, int(round(y)) - r)
+            x1c = min(w, int(round(x)) + r + 1)
+            y1c = min(h, int(round(y)) + r + 1)
+            patch = band_mask_bin[y0:y1c, x0:x1c]
+            roi_ratio = float(np.count_nonzero(patch)) / max(1, patch.size)
+            if roi_ratio < 0.12:
+                continue
+            results.append(
+                {
+                    "x": float(x),
+                    "y": float(y),
+                    "wall_i": i,
+                    "wall_j": j,
+                    "roi_ratio": round(roi_ratio, 3),
+                }
+            )
+    return results
+
+
+def _corner_intersections_to_split_x(intersections: list[dict], image_width: int, wall_mask_bin: np.ndarray) -> list[float]:
+    """Convert intersections to candidate split-X values without dropping edge candidates."""
+    xs: list[float] = []
+    for inter in intersections:
+        x = float(inter["x"])
+        if 0.0 <= x <= float(max(0, image_width - 1)):
+            xs.append(x)
+    return sorted(xs)
+
+
+def _nms_unique_x_candidates(xs: list[float], image_width: int) -> list[float]:
+    """Deduplicate candidate X values by minimum gap."""
+    if not xs:
+        return []
+    min_gap = max(6.0, EXTERIOR_LSD_NMS_GAP_RATIO * float(image_width))
+    xs_sorted = sorted(xs)
+    result: list[float] = [xs_sorted[0]]
+    for x in xs_sorted[1:]:
+        if x - result[-1] >= min_gap:
+            result.append(x)
+    return result
+
+
+def _apply_multiple_vertical_splits(
+    wall_mask_bin: np.ndarray,
+    split_xs: list[float],
+    image_width: int,
+    image_height: int,
+    min_area: int,
+) -> list[np.ndarray]:
+    """Apply multiple vertical split lines sequentially, returning final component masks."""
+    components: list[np.ndarray] = [wall_mask_bin.copy()]
+    for x in sorted(split_xs):
+        pt_a = np.array([x, 0.0], dtype=np.float64)
+        pt_b = np.array([x, float(image_height - 1)], dtype=np.float64)
+        new_components: list[np.ndarray] = []
+        for comp in components:
+            split_result = _component_masks_from_split_line(comp, pt_a, pt_b, min_area)
+            if split_result is not None and len(split_result) >= 2:
+                new_components.extend(split_result)
+            else:
+                new_components.append(comp)
+            if len(new_components) >= EXTERIOR_MAX_WALLS:
+                break
+        components = new_components
+        if len(components) >= EXTERIOR_MAX_WALLS:
+            break
+    return components
+
+
+def _split_by_rgb_lsd_corners(
+    wall_mask_bin: np.ndarray,
+    image_bgr: np.ndarray | None,
+    image_width: int,
+    image_height: int,
+    min_area: int,
+) -> tuple[list[dict] | None, dict]:
+    """Bottom-band RGB+LSD cascade: use only stable lower facade lines and their intersections."""
+    dbg: dict = {"enabled": True, "used": False, "method": "rgb_lsd_bottom_band_xacc_peaks"}
+    if image_bgr is None:
+        dbg["error"] = "image_bgr is None"
+        return None, dbg
+
+    gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
+    mask_bin = (wall_mask_bin > 0).astype(np.uint8) * 255
+    profile = _extract_bottom_profile(mask_bin)
+    if not bool(profile.get("valid")):
+        dbg["error"] = "bottom profile is empty"
+        return None, dbg
+    band_mask = _build_bottom_band_mask(mask_bin, profile, EXTERIOR_LSD_BOTTOM_BAND_RATIO)
+    dbg["bottom_band_nonzero"] = int(np.count_nonzero(band_mask))
+    dbg["bottom_band_ratio"] = round(float(EXTERIOR_LSD_BOTTOM_BAND_RATIO), 3)
+
+    # Stage 1: LSD only inside the adaptive lower band.
+    segments = _lsd_segments_in_bottom_band(gray, band_mask, profile, EXTERIOR_LSD_BOTTOM_NEAR_RATIO)
+    dbg["lsd_segments_total"] = len(segments)
+    if len(segments) < 4:
+        dbg["error"] = f"too few LSD segments: {len(segments)}"
+        return None, dbg
+
+    # Stage 2: split lower-band LSD segments by orientation.
+    horiz_segments, vert_segments = _split_segments_horizontal_vertical(segments)
+    dbg["direction_families_total"] = 2 if (horiz_segments or vert_segments) else 0
+    dbg["clusters_total"] = int((1 if horiz_segments else 0) + (1 if vert_segments else 0))
+    dbg["direction_families_detail"] = [
+        {
+            "name": "horizontal",
+            "n_segments": len(horiz_segments),
+            "total_length": round(sum(float(s.get("length", 0.0)) for s in horiz_segments), 1),
+            "y_mean": round(float(np.mean([float(s.get("y_mean", 0.0)) for s in horiz_segments])) if horiz_segments else 0.0, 2),
+        },
+        {
+            "name": "vertical",
+            "n_segments": len(vert_segments),
+            "total_length": round(sum(float(s.get("length", 0.0)) for s in vert_segments), 1),
+            "y_mean": round(float(np.mean([float(s.get("y_mean", 0.0)) for s in vert_segments])) if vert_segments else 0.0, 2),
+        },
+    ]
+    if len(vert_segments) < 2:
+        dbg["error"] = f"too few vertical segments: {len(vert_segments)}"
+        return None, dbg
+
+    # Stage 3: dominant vertical axes through weighted 1D x-accumulator.
+    xacc = _build_vertical_x_accumulator(vert_segments, image_width)
+    raw_acc = xacc["raw_acc"]
+    total_support = float(xacc["total_support"])
+    sigma_px = max(2.0, EXTERIOR_LSD_XACC_SIGMA_RATIO * float(image_width))
+    min_dist_px = max(8, int(round(EXTERIOR_LSD_XACC_MIN_PEAK_DIST_RATIO * float(image_width))))
+    smooth_acc = _smooth_x_accumulator(raw_acc, sigma_px)
+    max_acc = float(np.max(smooth_acc)) if smooth_acc.size > 0 else 0.0
+    min_prom_abs = max(1.0, EXTERIOR_LSD_XACC_MIN_PROM_FRAC * max_acc)
+    peaks_raw = _detect_x_peaks(smooth_acc, min_dist_px=min_dist_px, min_prom_abs=min_prom_abs)
+    split_x_raw, kept_peaks_diag = _peaks_to_split_candidates(
+        peaks_raw,
+        smooth_acc,
+        image_width,
+        mask_bin,
+        total_support=total_support,
+    )
+    dbg["x_acc_debug"] = {
+        "vert_segments_total": int(len(vert_segments)),
+        "xacc_sigma_px": round(float(sigma_px), 3),
+        "xacc_sum_raw": round(float(np.sum(raw_acc)), 3),
+        "xacc_sum_smooth": round(float(np.sum(smooth_acc)), 3),
+        "peak_count_raw": int(len(peaks_raw)),
+        "peak_count_kept": int(len(split_x_raw)),
+        "min_dist_px": int(min_dist_px),
+        "min_prom_abs": round(float(min_prom_abs), 3),
+        "kept_peaks": kept_peaks_diag,
+    }
+    dbg["plane_pairs_checked"] = 0
+    dbg["intersections_raw_total"] = int(len(peaks_raw))
+    dbg["intersection_dedupe_debug"] = {
+        "raw_total": int(len(peaks_raw)),
+        "dedup_total": int(len(split_x_raw)),
+        "removed": int(max(0, len(peaks_raw) - len(split_x_raw))),
+    }
+    dbg["intersections_total"] = int(len(split_x_raw))
+    dbg["intersections"] = [{"x": round(float(x), 2), "y": 0.0} for x in split_x_raw]
+
+    # Preserve overlays even when we fail later, so debug PNGs are still saved.
+    dbg["_segments_for_overlay"] = segments
+    dbg["_band_mask_for_overlay"] = band_mask
+    dbg["_planes_for_overlay"] = []
+    dbg["_x_peaks_raw_for_overlay"] = peaks_raw
+    dbg["_x_peaks_kept_for_overlay"] = split_x_raw
+
+    if not split_x_raw:
+        dbg["error"] = "no dominant vertical peaks"
+        return None, dbg
+
+    # Stage 4: convert peaks to split-x candidates, including edge candidates.
+    raw_xs = split_x_raw
+    dbg["split_x_candidates_raw"] = [round(x, 2) for x in raw_xs]
+    xs_nms = _nms_unique_x_candidates(raw_xs, image_width)
+    dbg["split_x_candidates_after_nms"] = [round(x, 2) for x in xs_nms]
+    if not xs_nms:
+        dbg["error"] = "no split-x candidates after NMS"
+        return None, dbg
+
+    # Stage 6: apply multiple splits
+    components = _apply_multiple_vertical_splits(mask_bin, xs_nms, image_width, image_height, min_area)
+    dbg["components_after_split"] = len(components)
+    if len(components) < 2:
+        dbg["error"] = f"split produced {len(components)} components (need >=2)"
+        return None, dbg
+
+    walls = _build_walls_from_component_masks(components)
+    dbg["walls_built_count"] = len(walls)
+    dbg["multiple_splits_used"] = True
+    dbg["used"] = True
+
+    # Preserve debug data for image overlays.
+    dbg["_intersections_for_overlay"] = [{"x": float(x), "y": 0.0} for x in split_x_raw]
+    dbg["_split_xs_for_overlay"] = xs_nms
+
+    return walls, dbg
+
+
+def _split_by_multiscale_candidates(
+    wall_mask: np.ndarray,
+    image_width: int,
+    image_height: int,
+    min_area: int,
+    top_k: int = 6,
+) -> tuple[list[dict] | None, dict]:
+    """
+    Relative top-k candidate split (no fixed confidence tiers).
+    Tries strongest vertical cut hypotheses and selects the best by resulting wall count + balance.
+    """
+    dbg: dict = {"enabled": True, "candidates": [], "selected": None, "used": False}
+    cands = _multi_scale_corner_candidates(wall_mask)
+    dbg["candidates_total"] = len(cands)
+    if not cands:
+        return None, dbg
+    cands = cands[: max(1, int(top_k))]
+    dbg["candidates"] = cands
+    best_walls: list[dict] | None = None
+    best_key = (-1, -1.0)
+    best_sel: dict | None = None
+    for c in cands:
+        x = float(c["x"])
+        pt_a = np.array([x, 0.0], dtype=np.float64)
+        pt_b = np.array([x, float(image_height - 1)], dtype=np.float64)
+        comps = _component_masks_from_split_line(wall_mask, pt_a, pt_b, min_area)
+        if comps is None:
+            continue
+        walls = _build_walls_from_component_masks(comps)
+        if len(walls) < 2:
+            continue
+        areas = [int(cv2.countNonZero(cm)) for cm in comps]
+        balance = float(min(areas) / max(areas)) if areas and max(areas) > 0 else 0.0
+        key = (len(walls), balance + 1e-3 * float(c["score"]))
+        if key > best_key:
+            best_key = key
+            best_walls = walls
+            best_sel = {"x": x, "walls_count": len(walls), "balance": round(balance, 4), "score": c["score"]}
+    dbg["selected"] = best_sel
+    dbg["used"] = best_walls is not None
+    return best_walls, dbg
+
+
 def postprocess_masks(
     wall_mask: np.ndarray,
     holes_mask: np.ndarray,
@@ -254,6 +1592,8 @@ EXTERIOR_MIN_SPLIT_RATIO = 0.12
 # При разрезе L-образного фасада: линия между двумя плоскостями в фото обычно близка к вертикали.
 EXTERIOR_PREFER_VERTICAL_SPLIT = float(os.getenv("EXTERIOR_PREFER_VERTICAL_SPLIT", "0.78"))
 EXTERIOR_SEAM_ENABLE = os.getenv("EXTERIOR_SEAM_ENABLE", "1") in {"1", "true", "TRUE", "yes", "YES"}
+# TEMP: forced off to validate non-seam geometry cascade behavior.
+EXTERIOR_SEAM_ENABLE = False
 EXTERIOR_SEAM_HOUGH_ENABLE = os.getenv("EXTERIOR_SEAM_HOUGH_ENABLE", "1") in {
     "1",
     "true",
@@ -2328,8 +3668,29 @@ async def run_exterior_pipeline(image_bytes: bytes, image_width: int, image_heig
     call_digest = hashlib.md5(image_bytes).hexdigest()[:10]
     call_dir = os.path.join(EXTERIOR_DEBUG_DIR, f"call_{call_ts}_{call_digest}")
     os.makedirs(call_dir, exist_ok=True)
+    t_pipe0 = time.perf_counter()
+    geom_trace: dict = {
+        "trace_version": 1,
+        "debug_level": EXTERIOR_GEOM_DEBUG_LEVEL,
+        "feature_flags": {
+            "geom_cascade_enable": EXTERIOR_GEOM_CASCADE_ENABLE,
+            "sam_batch_enable": EXTERIOR_SAM_BATCH_ENABLE,
+        },
+        "input": {
+            "image_size": {"width": int(image_width), "height": int(image_height)},
+            "image_digest": call_digest,
+        },
+        "stages": [],
+    }
 
+    def _stage(name: str, started_at: float, **kwargs: object) -> None:
+        rec = {"name": name, "elapsed_ms": round((time.perf_counter() - started_at) * 1000.0, 2)}
+        rec.update(kwargs)
+        geom_trace["stages"].append(rec)
+
+    t0 = time.perf_counter()
     building_bbox = await detect_building_bbox(image_bytes)
+    _stage("detect_building_bbox", t0, found=bool(building_bbox), bbox=building_bbox)
     if building_bbox is None:
         empty = np.zeros((image_height, image_width), dtype=np.uint8)
         empty_b64 = encode_mask_png_base64(empty)
@@ -2344,7 +3705,9 @@ async def run_exterior_pipeline(image_bytes: bytes, image_width: int, image_heig
             "debug": {"building_bbox": None, "windows_bboxes": [], "doors_bboxes": [], "walls_count": 0},
         }
 
+    t0 = time.perf_counter()
     wall_mask = await sam_mask_from_bbox(image_bytes, building_bbox)
+    _stage("sam_wall_mask", t0, nonzero=int(np.count_nonzero(wall_mask)))
 
     if wall_mask.shape != (image_height, image_width):
         wall_mask = cv2.resize(wall_mask, (image_width, image_height), interpolation=cv2.INTER_NEAREST)
@@ -2352,38 +3715,94 @@ async def run_exterior_pipeline(image_bytes: bytes, image_width: int, image_heig
     # ВАЖНО: сначала делим фасад на стены по цельной маске (без выреза окон/дверей),
     # затем отдельно считаем holes и отдаём wall_minus_holes для визуализации/клиппинга.
     no_holes_mask = np.zeros_like(wall_mask)
+    t0 = time.perf_counter()
     wall_for_split = postprocess_masks(wall_mask, no_holes_mask)
+    wall_for_split = _clean_mask_for_geometry(wall_for_split)
+    _stage(
+        "prepare_wall_for_split",
+        t0,
+        wall_nonzero=int(np.count_nonzero(wall_mask)),
+        wall_for_split_nonzero=int(np.count_nonzero(wall_for_split)),
+    )
 
+    t0 = time.perf_counter()
     image_bgr = _decode_image_bgr(image_bytes, image_width, image_height)
+    _stage("decode_image", t0, ok=image_bgr is not None)
     min_area = int(image_width * image_height * EXTERIOR_MIN_WALL_AREA_RATIO)
     comp_count = _count_large_components(wall_for_split, min_area)
     split_method_geo = "geometry_fallback"
     walls_geo: list[dict]
     seam_debug: dict = {}
+    geom_cascade_debug: dict = {"enabled": EXTERIOR_GEOM_CASCADE_ENABLE, "used": False}
     if comp_count <= 1:
+        t0 = time.perf_counter()
         walls_seam, seam_debug = _auto_split_by_corner_seam(
             wall_for_split, image_bgr, building_bbox, image_width, image_height
+        )
+        _stage(
+            "split_seam",
+            t0,
+            used=bool(walls_seam),
+            walls_count=len(walls_seam or []),
+            candidates=int(seam_debug.get("candidates_count", 0)),
+            best_score=round(float(seam_debug.get("best_score", 0.0)), 4),
         )
         if walls_seam and len(walls_seam) >= 2:
             walls_geo = walls_seam
             split_method_geo = "seam"
         else:
-            walls_kink = _split_by_bottom_contour_kink_once(
-                wall_for_split, image_width, image_height, min_area
-            )
-            if walls_kink and len(walls_kink) >= 2:
-                walls_geo = walls_kink
-                split_method_geo = "bottom_kink"
+            walls_geom_rel: list[dict] | None = None
+            if EXTERIOR_GEOM_CASCADE_ENABLE:
+                t0 = time.perf_counter()
+                walls_geom_rel, geom_cascade_debug = _split_by_rgb_lsd_corners(
+                    wall_for_split, image_bgr, image_width, image_height, min_area,
+                )
+                _stage(
+                    "split_geom_cascade",
+                    t0,
+                    used=bool(walls_geom_rel),
+                    walls_count=len(walls_geom_rel or []),
+                    lsd_segments=int(geom_cascade_debug.get("lsd_segments_total", 0)),
+                    clusters=int(geom_cascade_debug.get("clusters_total", 0)),
+                    intersections=int(geom_cascade_debug.get("intersections_total", 0)),
+                    splits_applied=len(geom_cascade_debug.get("split_x_candidates_after_nms") or []),
+                )
+            if walls_geom_rel and len(walls_geom_rel) >= 2:
+                walls_geo = walls_geom_rel
+                split_method_geo = "geom_rgb_lsd_bottom_band_multiple_splits"
             else:
-                component_masks = _component_masks_from_connected_components(wall_for_split, min_area)
-                walls_geo = _build_walls_from_component_masks(component_masks)
-                split_method_geo = "connected_components_fallback"
+                t0 = time.perf_counter()
+                walls_kink = _split_by_bottom_contour_kink_once(
+                    wall_for_split, image_width, image_height, min_area
+                )
+                _stage("split_bottom_kink", t0, used=bool(walls_kink), walls_count=len(walls_kink or []))
+                if walls_kink and len(walls_kink) >= 2:
+                    walls_geo = walls_kink
+                    split_method_geo = "bottom_kink"
+                else:
+                    component_masks = _component_masks_from_connected_components(wall_for_split, min_area)
+                    walls_geo = _build_walls_from_component_masks(component_masks)
+                    split_method_geo = "connected_components_fallback"
+                    _stage(
+                        "split_connected_components_fallback",
+                        time.perf_counter(),
+                        walls_count=len(walls_geo),
+                    )
     else:
+        t0 = time.perf_counter()
         component_masks = _component_masks_from_connected_components(wall_for_split, min_area)
         walls_geo = _build_walls_from_component_masks(component_masks)
         split_method_geo = "connected_components"
+        _stage("split_connected_components", t0, walls_count=len(walls_geo), components=int(comp_count))
 
+    t0 = time.perf_counter()
     openings = await detect_openings_bboxes(image_bytes, building_bbox)
+    _stage(
+        "detect_openings_bboxes",
+        t0,
+        windows_count=len(openings.get("windows") or []),
+        doors_count=len(openings.get("doors") or []),
+    )
     holes_mask = np.zeros((image_height, image_width), dtype=np.uint8)
     all_opening_bboxes_raw = openings["windows"] + openings["doors"]
     all_opening_bboxes = _filter_opening_bboxes(all_opening_bboxes_raw)
@@ -2392,6 +3811,7 @@ async def run_exterior_pipeline(image_bytes: bytes, image_width: int, image_heig
     sam_fallback_used = False
     if EXTERIOR_SAM_BATCH_ENABLE and all_opening_bboxes:
         try:
+            t_batch0 = time.perf_counter()
             for i in range(0, len(all_opening_bboxes), EXTERIOR_SAM_BATCH_SIZE):
                 chunk = all_opening_bboxes[i : i + EXTERIOR_SAM_BATCH_SIZE]
                 t0 = time.perf_counter()
@@ -2401,9 +3821,11 @@ async def run_exterior_pipeline(image_bytes: bytes, image_width: int, image_heig
                 for opening_mask in chunk_masks:
                     if opening_mask.shape == holes_mask.shape:
                         holes_mask = cv2.bitwise_or(holes_mask, opening_mask)
+            _stage("sam_batch_openings", t_batch0, chunks=sam_batch_chunks, total_ms=round(float(sam_batch_total_ms), 2))
         except Exception:
             sam_fallback_used = True
     if (not EXTERIOR_SAM_BATCH_ENABLE or sam_fallback_used) and all_opening_bboxes:
+        t_fallback0 = time.perf_counter()
         for ob in all_opening_bboxes:
             try:
                 opening_mask = await sam_mask_from_bbox(image_bytes, ob)
@@ -2411,9 +3833,12 @@ async def run_exterior_pipeline(image_bytes: bytes, image_width: int, image_heig
                     holes_mask = cv2.bitwise_or(holes_mask, opening_mask)
             except Exception:
                 continue
+        _stage("sam_single_openings_fallback", t_fallback0, used=True, boxes=len(all_opening_bboxes))
     if holes_mask.shape != (image_height, image_width):
         holes_mask = cv2.resize(holes_mask, (image_width, image_height), interpolation=cv2.INTER_NEAREST)
+    t0 = time.perf_counter()
     wall_minus_holes = postprocess_masks(wall_mask, holes_mask)
+    _stage("postprocess_wall_minus_holes", t0, nonzero=int(np.count_nonzero(wall_minus_holes)))
 
     # Упрощённый режим: для отладки seam/deometry НЕ переключаемся на depth-арбитр.
     # Финальный результат = геометрия/seam, чтобы поведение было предсказуемым.
@@ -2499,6 +3924,57 @@ async def run_exterior_pipeline(image_bytes: bytes, image_width: int, image_heig
             _draw_kinks(corner_dbg.get("profile_top") or [], (255, 0, 255), "PT")
             cv2.imwrite(os.path.join(call_dir, "kinks_overlay.png"), kinks_overlay)
 
+            if geom_cascade_debug.get("_band_mask_for_overlay") is not None:
+                cv2.imwrite(
+                    os.path.join(call_dir, "bottom_band.png"),
+                    geom_cascade_debug.get("_band_mask_for_overlay"),
+                )
+
+            # Save LSD overlay: detected segments, fitted lines, intersections, split lines.
+            if geom_cascade_debug.get("_segments_for_overlay"):
+                lsd_overlay = image_bgr.copy() if image_bgr is not None else cv2.cvtColor(wall_for_split, cv2.COLOR_GRAY2BGR)
+                mask_alpha = cv2.cvtColor(wall_for_split, cv2.COLOR_GRAY2BGR)
+                lsd_overlay = cv2.addWeighted(lsd_overlay, 0.7, mask_alpha, 0.3, 0)
+                band_mask_overlay = geom_cascade_debug.get("_band_mask_for_overlay")
+                if band_mask_overlay is not None:
+                    contours_band, _ = cv2.findContours(
+                        (band_mask_overlay > 0).astype(np.uint8),
+                        cv2.RETR_EXTERNAL,
+                        cv2.CHAIN_APPROX_SIMPLE,
+                    )
+                    cv2.drawContours(lsd_overlay, contours_band, -1, (255, 255, 0), 1)
+                for seg in geom_cascade_debug["_segments_for_overlay"]:
+                    p1 = (int(round(seg["x1"])), int(round(seg["y1"])))
+                    p2 = (int(round(seg["x2"])), int(round(seg["y2"])))
+                    cv2.line(lsd_overlay, p1, p2, (0, 255, 0), 1, cv2.LINE_AA)
+                for plane in geom_cascade_debug.get("_planes_for_overlay") or []:
+                    ln = plane.get("line") or {}
+                    a = float(ln.get("a", 0.0))
+                    b = float(ln.get("b", 0.0))
+                    c = float(ln.get("c", 0.0))
+                    if abs(b) > 1e-6:
+                        y0 = int(round((-c - a * 0.0) / b))
+                        y1 = int(round((-c - a * float(image_width - 1)) / b))
+                        cv2.line(lsd_overlay, (0, y0), (image_width - 1, y1), (0, 200, 255), 1, cv2.LINE_AA)
+                for p in geom_cascade_debug.get("_x_peaks_raw_for_overlay") or []:
+                    xi = int(round(float(p.get("x", 0.0))))
+                    cv2.line(lsd_overlay, (xi, 0), (xi, image_height - 1), (0, 180, 255), 1, cv2.LINE_AA)
+                for sx in geom_cascade_debug.get("_x_peaks_kept_for_overlay") or []:
+                    xi = int(round(float(sx)))
+                    cv2.line(lsd_overlay, (xi, 0), (xi, image_height - 1), (255, 255, 0), 2, cv2.LINE_AA)
+                for inter in geom_cascade_debug.get("_intersections_for_overlay") or []:
+                    cx = int(round(inter["x"]))
+                    cy = int(round(inter["y"]))
+                    cv2.circle(lsd_overlay, (cx, cy), 8, (0, 0, 255), -1)
+                    cv2.circle(lsd_overlay, (cx, cy), 10, (255, 255, 255), 2)
+                    lbl = f"({cx},{cy})"
+                    cv2.putText(lsd_overlay, lbl, (cx + 12, cy - 5),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1, cv2.LINE_AA)
+                for sx in geom_cascade_debug.get("_split_xs_for_overlay") or []:
+                    xi = int(round(sx))
+                    cv2.line(lsd_overlay, (xi, 0), (xi, image_height - 1), (255, 0, 255), 2, cv2.LINE_AA)
+                cv2.imwrite(os.path.join(call_dir, "lsd_overlay.png"), lsd_overlay)
+
             # Save profile denoise stages: raw -> median-smoothed -> piecewise.
             bw_dbg = int(wall_for_split.shape[1])
             bh_dbg = int(wall_for_split.shape[0])
@@ -2545,6 +4021,18 @@ async def run_exterior_pipeline(image_bytes: bytes, image_width: int, image_heig
             _draw_profile_stage(pt_dbg, (255, 0, 0), (255, 0, 255))   # top
             cv2.imwrite(os.path.join(call_dir, "profile_denoise_overlay.png"), denoise_overlay)
 
+            # Strip non-serializable overlay data before JSON dump.
+            for _overlay_key in (
+                "_segments_for_overlay",
+                "_intersections_for_overlay",
+                "_split_xs_for_overlay",
+                "_band_mask_for_overlay",
+                "_planes_for_overlay",
+                "_x_peaks_raw_for_overlay",
+                "_x_peaks_kept_for_overlay",
+            ):
+                geom_cascade_debug.pop(_overlay_key, None)
+
             # Save response summary (no base64 to keep files small).
             import json as _json
 
@@ -2560,6 +4048,7 @@ async def run_exterior_pipeline(image_bytes: bytes, image_width: int, image_heig
                     "split_arbiter": split_arbiter,
                     "split_mask_used": "wall_for_split",
                     "contour_corner_debug": corner_dbg,
+                    "geom_cascade_debug": geom_cascade_debug,
                     "openings_bboxes_raw_count": len(all_opening_bboxes_raw),
                     "openings_bboxes_filtered_count": len(all_opening_bboxes),
                     "sam_batch_enable": EXTERIOR_SAM_BATCH_ENABLE,
@@ -2567,6 +4056,8 @@ async def run_exterior_pipeline(image_bytes: bytes, image_width: int, image_heig
                     "sam_batch_chunks": sam_batch_chunks,
                     "sam_batch_total_ms": round(float(sam_batch_total_ms), 2),
                     "sam_fallback_used": sam_fallback_used,
+                    "trace_digest": call_digest,
+                    "trace_stage_count": len(geom_trace.get("stages", [])),
                     "profile_denoise_debug": {
                         "bottom_vertices": len((pb_dbg or {}).get("piecewise_profile") or []),
                         "top_vertices": len((pt_dbg or {}).get("piecewise_profile") or []),
@@ -2594,19 +4085,42 @@ async def run_exterior_pipeline(image_bytes: bytes, image_width: int, image_heig
             }
             with open(os.path.join(call_dir, "response_summary.json"), "w", encoding="utf-8") as f:
                 f.write(_json.dumps(summary, ensure_ascii=False, indent=2))
+            if EXTERIOR_GEOM_DEBUG_SAVE_JSON:
+                geom_trace["pipeline_total_ms"] = round((time.perf_counter() - t_pipe0) * 1000.0, 2)
+                geom_trace["result"] = {
+                    "split_method": split_method,
+                    "walls_count": len(walls),
+                    "sam_batch_chunks": sam_batch_chunks,
+                    "sam_fallback_used": sam_fallback_used,
+                }
+                with open(os.path.join(call_dir, "debug_trace.json"), "w", encoding="utf-8") as f:
+                    f.write(_json.dumps(geom_trace, ensure_ascii=False, indent=2))
         except Exception as dbg_err:
             print(f"[exterior-debug] save failed: {dbg_err}")
 
     # Always log a minimal summary to console (useful even if debug save off).
     try:
         polygon_lens = [len(w.get("polygon") or []) for w in walls]
+        geom_trace["pipeline_total_ms"] = round((time.perf_counter() - t_pipe0) * 1000.0, 2)
         print(
             f"[detect-exterior] walls={len(walls)} polygon_lens={polygon_lens[:10]} "
             f"wall_minus_holes_nonzero={int(np.count_nonzero(wall_minus_holes))} "
-            f"split={split_method} arb={split_arbiter.get('chosen', '')} call={call_ts}_{call_digest}"
+            f"split={split_method} arb={split_arbiter.get('chosen', '')} "
+            f"geom_ms={geom_trace.get('pipeline_total_ms', 0)} call={call_ts}_{call_digest}"
         )
     except Exception:
         pass
+
+    for _overlay_key in (
+        "_segments_for_overlay",
+        "_intersections_for_overlay",
+        "_split_xs_for_overlay",
+        "_band_mask_for_overlay",
+        "_planes_for_overlay",
+        "_x_peaks_raw_for_overlay",
+        "_x_peaks_kept_for_overlay",
+    ):
+        geom_cascade_debug.pop(_overlay_key, None)
 
     return {
         "walls": walls,
@@ -2623,6 +4137,12 @@ async def run_exterior_pipeline(image_bytes: bytes, image_width: int, image_heig
             "walls_count": len(walls),
             "split_method": split_method,
             "seam_debug": seam_debug,
+            "geom_cascade_debug": geom_cascade_debug,
             "split_arbiter": split_arbiter,
+            "trace": {
+                "digest": call_digest,
+                "stages": geom_trace.get("stages", [])[:EXTERIOR_GEOM_DEBUG_TOPN],
+                "pipeline_total_ms": geom_trace.get("pipeline_total_ms", 0.0),
+            },
         },
     }

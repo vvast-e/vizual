@@ -5,8 +5,10 @@ import { useVisualizerStore } from '@/store/useVisualizerStore'
 import { useUIStore } from '@/store/useUIStore'
 import { useWallStore } from '@/store/useWallStore'
 import type { WallData } from '@/store/useWallStore'
+import { useHistoryStore } from '@/store/useHistoryStore'
 import { MAX_PHOTO_SIZE_BYTES, ALLOWED_IMAGE_TYPES } from '@/lib/constants'
 import { splitExteriorWalls } from '@/hooks/useWallDetection'
+import { autoLinkPerspectiveToForm } from '@/lib/perspective-helper'
 
 export interface UseCanvas2DOptions {
   canvasRef: React.RefObject<HTMLCanvasElement | null>
@@ -63,8 +65,70 @@ export function useCanvas2D({
   customMaskModeRef.current = customMaskMode
   const customMaskPointsRef = useRef<{ x: number; y: number }[]>([])
   const customMaskPreviewRef = useRef<FabricObject[]>([])
+  const customMaskHistoryRef = useRef<{ x: number; y: number }[][]>([])
+  const customMaskFutureRef = useRef<{ x: number; y: number }[][]>([])
   const onCustomMaskCompleteRef = useRef(onCustomMaskComplete)
   onCustomMaskCompleteRef.current = onCustomMaskComplete
+
+  const rebuildCustomMaskPreview = useCallback(() => {
+    const canvas = canvasInstanceRef.current
+    if (!canvas) return
+    for (const obj of customMaskPreviewRef.current) {
+      canvas.remove(obj)
+    }
+    customMaskPreviewRef.current = []
+    const pts = customMaskPointsRef.current
+    if (pts.length === 0) {
+      canvas.requestRenderAll()
+      return
+    }
+    pts.forEach((p, idx) => {
+      const dot = new Circle({
+        left: p.x - 5,
+        top: p.y - 5,
+        radius: 5,
+        fill: '#10b981',
+        stroke: '#064e3b',
+        strokeWidth: 1,
+        selectable: false,
+        evented: false,
+        originX: 'left',
+        originY: 'top',
+      })
+      canvas.add(dot)
+      customMaskPreviewRef.current.push(dot)
+      if (idx > 0) {
+        const prev = pts[idx - 1]
+        const line = new Path(`M ${prev.x} ${prev.y} L ${p.x} ${p.y}`, {
+          stroke: '#10b981',
+          strokeWidth: 2,
+          selectable: false,
+          evented: false,
+        })
+        canvas.add(line)
+        customMaskPreviewRef.current.push(line)
+      }
+    })
+    canvas.requestRenderAll()
+  }, [])
+
+  const undoCustomMask = useCallback(() => {
+    if (customMaskHistoryRef.current.length === 0) return
+    const prev = customMaskHistoryRef.current.pop()
+    if (!prev) return
+    customMaskFutureRef.current.push([...customMaskPointsRef.current])
+    customMaskPointsRef.current = [...prev]
+    rebuildCustomMaskPreview()
+  }, [rebuildCustomMaskPreview])
+
+  const redoCustomMask = useCallback(() => {
+    if (customMaskFutureRef.current.length === 0) return
+    const next = customMaskFutureRef.current.pop()
+    if (!next) return
+    customMaskHistoryRef.current.push([...customMaskPointsRef.current])
+    customMaskPointsRef.current = [...next]
+    rebuildCustomMaskPreview()
+  }, [rebuildCustomMaskPreview])
 
   const initCanvas = useCallback(() => {
     const el = canvasRef.current
@@ -99,11 +163,15 @@ export function useCanvas2D({
 
       if (customMaskModeRef.current) {
         const pts = customMaskPointsRef.current
-        pts.push({ x: scenePoint.x, y: scenePoint.y })
+        // Сохраняем предыдущее состояние для Undo
+        customMaskHistoryRef.current.push([...pts])
+        customMaskFutureRef.current = []
+        const newPoint = { x: scenePoint.x, y: scenePoint.y }
+        pts.push(newPoint)
 
         const dot = new Circle({
-          left: scenePoint.x - 5,
-          top: scenePoint.y - 5,
+          left: newPoint.x - 5,
+          top: newPoint.y - 5,
           radius: 5,
           fill: '#10b981',
           stroke: '#064e3b',
@@ -118,7 +186,7 @@ export function useCanvas2D({
 
         if (pts.length > 1) {
           const prev = pts[pts.length - 2]
-          const line = new Path(`M ${prev.x} ${prev.y} L ${scenePoint.x} ${scenePoint.y}`, {
+          const line = new Path(`M ${prev.x} ${prev.y} L ${newPoint.x} ${newPoint.y}`, {
             stroke: '#10b981',
             strokeWidth: 2,
             selectable: false,
@@ -128,39 +196,50 @@ export function useCanvas2D({
           customMaskPreviewRef.current.push(line)
         }
 
-        if (pts.length >= 4) {
-          const last = pts[3]
+        // Завершение рисования: клик рядом с первой точкой при >=3 вершинах.
+        if (pts.length >= 3) {
           const first = pts[0]
-          const closeLine = new Path(`M ${last.x} ${last.y} L ${first.x} ${first.y}`, {
-            stroke: '#10b981',
-            strokeWidth: 2,
-            selectable: false,
-            evented: false,
-          })
-          canvas.add(closeLine)
-          customMaskPreviewRef.current.push(closeLine)
-
-          const bounds = getBackgroundBounds()
-          const wallImageSize = useWallStore.getState().wallImageSize
-          if (bounds && wallImageSize && bounds.width > 0 && bounds.height > 0) {
-            const corners: [number, number][] = pts.map((p) => {
-              const ix = Math.round(((p.x - bounds.left) / bounds.width) * wallImageSize.width)
-              const iy = Math.round(((p.y - bounds.top) / bounds.height) * wallImageSize.height)
-              const ixCl = Math.max(0, Math.min(wallImageSize.width - 1, ix))
-              const iyCl = Math.max(0, Math.min(wallImageSize.height - 1, iy))
-              return [ixCl, iyCl] as [number, number]
+          const dx = newPoint.x - first.x
+          const dy = newPoint.y - first.y
+          const dist = Math.sqrt(dx * dx + dy * dy)
+          const CLOSE_RADIUS = 15
+          if (dist <= CLOSE_RADIUS) {
+            // Используем первую точку как последнюю для замыкания.
+            pts[pts.length - 1] = { x: first.x, y: first.y }
+            const prev = pts[pts.length - 2]
+            const closeLine = new Path(`M ${prev.x} ${prev.y} L ${first.x} ${first.y}`, {
+              stroke: '#10b981',
+              strokeWidth: 2,
+              selectable: false,
+              evented: false,
             })
-            const cb = onCustomMaskCompleteRef.current
-            if (cb) {
-              cb(corners)
-            }
-          }
+            canvas.add(closeLine)
+            customMaskPreviewRef.current.push(closeLine)
 
-          for (const obj of customMaskPreviewRef.current) {
-            canvas.remove(obj)
+            const bounds = getBackgroundBounds()
+            const wallImageSize = useWallStore.getState().wallImageSize
+            if (bounds && wallImageSize && bounds.width > 0 && bounds.height > 0) {
+              const corners: [number, number][] = pts.map((p) => {
+                const ix = Math.round(((p.x - bounds.left) / bounds.width) * wallImageSize.width)
+                const iy = Math.round(((p.y - bounds.top) / bounds.height) * wallImageSize.height)
+                const ixCl = Math.max(0, Math.min(wallImageSize.width - 1, ix))
+                const iyCl = Math.max(0, Math.min(wallImageSize.height - 1, iy))
+                return [ixCl, iyCl] as [number, number]
+              })
+              const cb = onCustomMaskCompleteRef.current
+              if (cb) {
+                cb(corners)
+              }
+            }
+
+            for (const obj of customMaskPreviewRef.current) {
+              canvas.remove(obj)
+            }
+            customMaskPreviewRef.current = []
+            customMaskPointsRef.current = []
+            customMaskHistoryRef.current = []
+            customMaskFutureRef.current = []
           }
-          customMaskPreviewRef.current = []
-          customMaskPointsRef.current = []
         }
 
         canvas.requestRenderAll()
@@ -239,6 +318,9 @@ export function useCanvas2D({
           splitWallId != null && wallsSnapshot.length > 0
             ? { targetWallId: splitWallId, walls: wallsSnapshot }
             : undefined
+
+        // Сохраняем состояние ДО разрезания
+        useHistoryStore.getState().push()
 
         void splitExteriorWalls(
           maskB64,
@@ -784,8 +866,13 @@ export function useCanvas2D({
       repeat: 'repeat' | 'repeat-x' | 'repeat-y' = 'repeat',
       options?: { clipPathOverride?: FabricObject }
     ) => {
+      console.log('[DEBUG] applyTexture: textureUrl =', textureUrl)
+      console.log('[DEBUG] applyTexture: textureScale =', textureScale)
       const canvas = canvasInstanceRef.current
-      if (!canvas) return
+      if (!canvas) {
+        console.log('[DEBUG] applyTexture: NO canvas')
+        return
+      }
       
       const layerKey = 'background'
       if (textureLayersRef.current[layerKey]) {
@@ -825,8 +912,15 @@ export function useCanvas2D({
       _wallImageSize: { width: number; height: number } | null,
       selectedWallId: number | null
     ) => {
+      console.log('[DEBUG] applyTextureToWall: START')
+      console.log('[DEBUG] applyTextureToWall: textureUrl =', textureUrl)
+      console.log('[DEBUG] applyTextureToWall: wallCorners =', wallCorners)
+      console.log('[DEBUG] applyTextureToWall: selectedWallId =', selectedWallId)
       const canvas = canvasInstanceRef.current
-      if (!canvas) return
+      if (!canvas) {
+        console.log('[DEBUG] applyTextureToWall: NO canvas')
+        return
+      }
       
       const layerKey = selectedWallId != null ? String(selectedWallId) : 'background'
       if (textureLayersRef.current[layerKey]) {
@@ -835,16 +929,24 @@ export function useCanvas2D({
 
       const sceneMode = useUIStore.getState().sceneMode
       const wall = selectedWallId != null ? useWallStore.getState().walls.find((w) => w.id === selectedWallId) : null
+      console.log('[DEBUG] applyTextureToWall: wall =', wall?.id, 'polygon length =', wall?.polygon?.length)
       const wallPolygon = wall?.polygon && wall.polygon.length >= 3 ? wall.polygon : undefined
+      console.log('[DEBUG] applyTextureToWall: wallPolygon =', wallPolygon)
 
       if (sceneMode === 'exterior' && wallPolygon && _wallImageSize) {
+        console.log('[DEBUG] applyTextureToWall: going to warpWallTexture')
         const bgTx = getBackgroundTransform()
-        if (!bgTx) return
+        console.log('[DEBUG] applyTextureToWall: bgTx =', bgTx)
+        if (!bgTx) {
+          console.log('[DEBUG] applyTextureToWall: NO bgTx')
+          return
+        }
 
         const { warpWallTexture } = await import('@/hooks/warpWallTexture')
         const regions =
           wall?.regions && wall.regions.length === 2 ? wall.regions : undefined
         const maskBase64 = useWallStore.getState().exteriorMaskBase64
+        console.log('[DEBUG] applyTextureToWall: maskBase64 =', maskBase64 ? 'exists' : 'null')
 
         const blob = await warpWallTexture({
           textureUrl,
@@ -856,15 +958,19 @@ export function useCanvas2D({
           opacity: 1,
           maskBase64,
         })
-
+        console.log('[DEBUG] applyTextureToWall: blob received')
+        console.log('[DEBUG] applyTextureToWall: creating Image')
         const img = new Image()
         const objectUrl = URL.createObjectURL(blob)
+        console.log('[DEBUG] applyTextureToWall: objectUrl =', objectUrl)
         img.src = objectUrl
         await new Promise((resolve, reject) => {
           img.onload = () => resolve(true)
           img.onerror = () => reject(new Error('Failed to load warped texture blob'))
         })
+        console.log('[DEBUG] applyTextureToWall: img loaded')
         URL.revokeObjectURL(objectUrl)
+        console.log('[DEBUG] applyTextureToWall: creating FabricImage')
 
         const fabricImg = new FabricImage(img, {
           left: bgTx.left,
@@ -882,14 +988,16 @@ export function useCanvas2D({
           flipX: bgTx.flipX,
           flipY: bgTx.flipY,
         })
-
+        console.log('[DEBUG] applyTextureToWall: FabricImage created')
         canvas.add(fabricImg)
         textureLayersRef.current[layerKey] = fabricImg
         setHasTextureLayer(true)
         canvas.requestRenderAll()
+        console.log('[DEBUG] applyTextureToWall: DONE')
         return
       }
 
+      console.log('[DEBUG] applyTextureToWall: using renderPerspectiveWallTexture (interior mode)')
       const { renderPerspectiveWallTexture } = await import('@/lib/texture-processor')
 
       const width = canvas.getWidth() ?? containerWidth
@@ -1035,6 +1143,16 @@ export function useCanvas2D({
           canvas.requestRenderAll()
         })
 
+        handle.on('modified', () => {
+          // Автоматически привязываем перспективу к форме
+          const wall = useWallStore.getState().walls.find((w) => w.id === selectedWallId)
+          if (wall?.polygon) {
+            const newCorners = autoLinkPerspectiveToForm(wall)
+            updateWallCorners(selectedWallId, newCorners)
+          }
+          useHistoryStore.getState().push()
+        })
+
         canvas.add(handle)
         cornerHandlesRef.current.push(handle)
       })
@@ -1076,6 +1194,16 @@ export function useCanvas2D({
           const newIx = Math.round((hx - bounds.left) / scaleX)
           const newIy = Math.round((hy - bounds.top) / scaleY)
           updateWallPolygonVertex(selectedWallId, idx, [newIx, newIy])
+        })
+
+        handle.on('modified', () => {
+          // Автоматически привязываем перспективу к форме
+          const wall = useWallStore.getState().walls.find((w) => w.id === selectedWallId)
+          if (wall?.polygon) {
+            const newCorners = autoLinkPerspectiveToForm(wall)
+            updateWallCorners(selectedWallId, newCorners)
+          }
+          useHistoryStore.getState().push()
         })
 
         canvas.add(handle)
@@ -1154,5 +1282,13 @@ export function useCanvas2D({
     setTextureScale,
     hasTextureLayer,
     isPhotoLoaded,
+    undoCustomMask,
+    redoCustomMask,
+    get canUndoCustomMask() {
+      return customMaskHistoryRef.current.length > 0
+    },
+    get canRedoCustomMask() {
+      return customMaskFutureRef.current.length > 0
+    },
   }
 }
