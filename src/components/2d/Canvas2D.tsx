@@ -121,6 +121,24 @@ export function Canvas2D({
     return () => observer.disconnect()
   }, [])
 
+  // Ctrl+Z / Ctrl+Y hotkeys for undo/redo
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.target as HTMLElement)?.tagName === 'INPUT' || (e.target as HTMLElement)?.tagName === 'TEXTAREA') return
+      const ctrl = e.ctrlKey || e.metaKey
+      if (!ctrl) return
+      if (e.key === 'z' && !e.shiftKey) {
+        e.preventDefault()
+        if (canUndo()) undo()
+      } else if (e.key === 'y' || (e.key === 'z' && e.shiftKey)) {
+        e.preventDefault()
+        if (canRedo()) redo()
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [undo, redo, canUndo, canRedo])
+
   const {
     isReady,
     loadPhotoFromDataUrl,
@@ -219,34 +237,19 @@ export function Canvas2D({
   /** Получить URL текстуры с учётом HSV-колоризации */
   const getTextureUrl = useCallback(async (rawUrl: string): Promise<string> => {
     const willColorize = !!(selectedColor && selectedColor.hex !== '#ffffff' && colorizeOpacity > 0.001)
-    console.log('[DEBUG] getTextureUrl: rawUrl =', rawUrl)
-    console.log('[DEBUG] getTextureUrl: selectedColor =', selectedColor?.hex)
-    console.log('[DEBUG] getTextureUrl: colorizeOpacity =', colorizeOpacity)
-    console.log('[DEBUG] getTextureUrl: willColorize =', willColorize)
     if (willColorize) {
-      const result = await getColorizedTextureUrl(rawUrl)
-      console.log('[DEBUG] getTextureUrl: returning colorized')
-      return result
+      return await getColorizedTextureUrl(rawUrl)
     }
-    console.log('[DEBUG] getTextureUrl: returning rawUrl')
     return rawUrl
   }, [selectedColor, colorizeOpacity, getColorizedTextureUrl])
 
   const handleApplyTexture = useCallback(async () => {
     const rawUrl = selectedMaterial?.texture.url
-    console.log('[DEBUG] handleApplyTexture: selectedMaterial =', selectedMaterial)
-    console.log('[DEBUG] handleApplyTexture: rawUrl =', rawUrl)
     if (!rawUrl) {
-      console.log('[DEBUG] handleApplyTexture: NO rawUrl, returning')
       return
     }
     try {
       const url = await getTextureUrl(rawUrl)
-      console.log('[DEBUG] handleApplyTexture: url after getTextureUrl =', url)
-      console.log('[DEBUG] sceneMode =', sceneMode)
-      console.log('[DEBUG] walls.length =', walls.length)
-      console.log('[DEBUG] wallImageSize =', wallImageSize)
-      console.log('[DEBUG] will go to applyTexture =', sceneMode !== 'exterior' || walls.length === 0 || !wallImageSize)
       if (sceneMode === 'exterior' && walls.length > 0 && wallImageSize) {
         if (facadeMergeActive) {
           const profiledIds = walls
@@ -284,7 +287,6 @@ export function Canvas2D({
           }
         }
       }
-      console.log('[DEBUG] calling applyTexture')
       await applyTexture(url, 'repeat')
     } catch (err) {
       console.error('Не удалось наложить текстуру:', rawUrl, err)

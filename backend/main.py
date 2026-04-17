@@ -82,15 +82,34 @@ def _detect_walls_sync(image_path: str) -> dict:
     }
 
 def _order_points_tl_tr_br_bl(pts: np.ndarray) -> np.ndarray:
-    """Order 4 points as [TL, TR, BR, BL]. pts shape: (4,2)."""
-    rect = np.zeros((4, 2), dtype=np.float32)
-    s = pts.sum(axis=1)
-    rect[0] = pts[np.argmin(s)]  # TL
-    rect[2] = pts[np.argmax(s)]  # BR
-    diff = np.diff(pts, axis=1).reshape(-1)
-    rect[1] = pts[np.argmin(diff)]  # TR
-    rect[3] = pts[np.argmax(diff)]  # BL
-    return rect
+    """Упорядочивает 4 точки как [TL, TR, BR, BL] для любого выпуклого четырехугольника."""
+    pts = pts.astype(np.float32)
+    
+    # 1. Центроид
+    cx, cy = np.mean(pts, axis=0)
+    
+    # 2. Углы относительно центроида
+    angles = np.arctan2(pts[:, 1] - cy, pts[:, 0] - cx)
+    
+    # 3. Сортировка по углу
+    sorted_indices = np.argsort(angles)
+    sorted_pts = pts[sorted_indices]
+    
+    # 4. Найти TL (минимальная сумма x+y)
+    sums = sorted_pts[:, 0] + sorted_pts[:, 1]
+    tl_idx = np.argmin(sums)
+    
+    # 5. Сдвинуть массив
+    ordered = np.roll(sorted_pts, -tl_idx, axis=0)
+    
+    # 6. Проверить направление и инвертировать если нужно
+    v1 = ordered[1] - ordered[0]
+    v2 = ordered[-1] - ordered[0]
+    cross = v1[0] * v2[1] - v1[1] * v2[0]
+    if cross < 0:
+        ordered[[1, 3]] = ordered[[3, 1]]
+    
+    return ordered
 
 
 def _tile_texture_rgba(texture_rgba: np.ndarray, width: int, height: int, scale: float) -> np.ndarray:
@@ -258,15 +277,151 @@ def _warp_triangle_affine(
     dst_rgba[r2[1] : r2[1] + r2[3], r2[0] : r2[0] + r2[2]] = np.clip(blended, 0, 255).astype(np.uint8)
 
 
-def _corners_from_polygon_auto(poly_pts: np.ndarray) -> np.ndarray:
-    """Derive 4 TL/TR/BR/BL guide corners from an N-point polygon via minAreaRect.
+def _visvalingam_triangle_area(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> float:
+    """Area of triangle formed by three 2D points (for Visvalingam-Whyatt)."""
+    return 0.5 * abs(
+        float((b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1]))
+    )
 
-    Used to auto-compute perspective direction when only a polygon is provided
-    (no explicit 4-corner quad).  Returns shape (4, 2) float32.
+
+def _visvalingam_reduce(pts: np.ndarray, target_n: int) -> np.ndarray:
     """
-    rect = cv2.minAreaRect(poly_pts.astype(np.float32))
-    box = cv2.boxPoints(rect).astype(np.float32)
-    return _order_points_tl_tr_br_bl(box)
+    Reduce a closed polygon to *target_n* vertices using Visvalingam-Whyatt.
+    Iteratively removes the vertex whose removal changes shape area the least
+    (i.e. the one that forms the smallest triangle with its two neighbours).
+    """
+    pts_list: list[np.ndarray] = [p.copy() for p in pts]
+    while len(pts_list) > target_n:
+        n = len(pts_list)
+        min_area = float("inf")
+        min_idx = 0
+        for i in range(n):
+            a = pts_list[(i - 1) % n]
+            b = pts_list[i]
+            c = pts_list[(i + 1) % n]
+            area = _visvalingam_triangle_area(a, b, c)
+            if area < min_area:
+                min_area = area
+                min_idx = i
+        pts_list.pop(min_idx)
+    return np.array(pts_list, dtype=np.float32)
+
+
+def _expand_triangle_to_quad(
+    hull_pts: np.ndarray, original_pts: np.ndarray
+) -> np.ndarray:
+    """
+    Turn a 3-vertex convex hull (triangle) into a wall quad.
+
+    Strategy
+    --------
+    1. Peak = topmost vertex (smallest Y).
+    2. Look for original polygon points in the upper 15-50 % height band that are
+       NOT the peak — these are the "eaves" points where wall meets roof.
+    3. If two suitable eaves points exist, use them as TL/TR.
+    4. Otherwise, intersect hull slopes at 30 % height from peak.
+    """
+    sorted_idx = np.argsort(hull_pts[:, 1])
+    peak = hull_pts[sorted_idx[0]]
+    base = hull_pts[sorted_idx[1:]].copy()
+    if base[0][0] > base[1][0]:
+        base = base[::-1]
+    bl, br = base[0], base[1]
+
+    y_peak = float(peak[1])
+    y_base = float(max(bl[1], br[1]))
+    total_h = y_base - y_peak
+    if total_h < 3:
+        mid = (bl + br) / 2.0
+        return np.array(
+            [[mid[0] - 10, y_peak], [mid[0] + 10, y_peak], br, bl],
+            dtype=np.float32,
+        )
+
+    # --- try to find eaves from original polygon points ---
+    upper: list[np.ndarray] = []
+    for p in original_pts:
+        y = float(p[1])
+        if y_peak + 0.10 * total_h < y < y_peak + 0.50 * total_h:
+            upper.append(p)
+    if len(upper) >= 2:
+        arr = np.array(upper, dtype=np.float32)
+        tl = arr[int(np.argmin(arr[:, 0]))]
+        tr = arr[int(np.argmax(arr[:, 0]))]
+        if np.linalg.norm(tl - tr) >= 5:
+            return np.array([tl, tr, br, bl], dtype=np.float32)
+
+    # --- fallback: intersect slopes at 30 % from peak ---
+    y_eaves = y_peak + 0.30 * total_h
+    t_l = float(np.clip((y_eaves - peak[1]) / (bl[1] - peak[1] + 1e-9), 0, 1))
+    t_r = float(np.clip((y_eaves - peak[1]) / (br[1] - peak[1] + 1e-9), 0, 1))
+    tl = np.array(
+        [peak[0] + t_l * (bl[0] - peak[0]), y_eaves], dtype=np.float32
+    )
+    tr = np.array(
+        [peak[0] + t_r * (br[0] - peak[0]), y_eaves], dtype=np.float32
+    )
+    return np.array([tl, tr, br, bl], dtype=np.float32)
+
+
+def _corners_from_polygon_auto(poly_pts: list[list[float]] | np.ndarray) -> np.ndarray:
+    """
+    Derive 4 perspective corners (wall trapezoid) from an N-point polygon.
+
+    v3 — hull-vertex approach (preserves perspective):
+
+    * hull == 4 → use vertices directly  (most walls; keeps real Y-coords)
+    * hull >  4 → Visvalingam-Whyatt reduce to 4  (gable/hip roofs)
+    * hull == 3 → expand triangle: find eaves from original points
+    """
+    pts = np.array(poly_pts, dtype=np.float32).reshape(-1, 2)
+    if len(pts) < 3:
+        raise ValueError("Polygon must have at least 3 points")
+
+    hull = cv2.convexHull(pts.astype(np.int32))
+    hull_pts = hull[:, 0].astype(np.float32)
+    n_hull = len(hull_pts)
+    if n_hull < 3:
+        raise ValueError("Degenerate convex hull")
+
+    method = ""
+
+    if n_hull == 4:
+        quad = hull_pts.copy()
+        method = "hull4"
+    elif n_hull > 4:
+        quad = _visvalingam_reduce(hull_pts, 4)
+        method = f"visvalingam({n_hull}->4)"
+    else:
+        # n_hull == 3
+        quad = _expand_triangle_to_quad(hull_pts, pts)
+        method = "triangle_expand"
+
+    ordered = _order_points_tl_tr_br_bl(quad)
+    area = abs(_polygon_area_signed(ordered))
+
+    if area < 200:
+        # Fallback to axis-aligned bounding box
+        y_min = float(np.min(pts[:, 1]))
+        y_max = float(np.max(pts[:, 1]))
+        x_min = float(np.min(pts[:, 0]))
+        x_max = float(np.max(pts[:, 0]))
+        ordered = _order_points_tl_tr_br_bl(
+            np.array(
+                [[x_min, y_min], [x_max, y_min], [x_max, y_max], [x_min, y_max]],
+                dtype=np.float32,
+            )
+        )
+        area = abs(_polygon_area_signed(ordered))
+        method += "+bbox_fallback"
+
+    print(
+        f"[warp-debug] _corners_from_polygon_auto v3: "
+        f"input={len(pts)}pts hull={n_hull}pts method={method} "
+        f"corners={np.round(ordered, 1).tolist()} "
+        f"area={area:.0f}"
+    )
+    return ordered
 
 
 def _warp_region_inv_uv_rgba(
@@ -355,7 +510,13 @@ def _warp_texture_overlay_multi_regions_sync(
         cv2.fillPoly(rm, [poly_pts.astype(np.int32)], 255)
         region_polys.append(poly_pts)
         region_masks.append(rm)
-        dc = np.array(c, dtype=np.float32).reshape(4, 2)
+        # Always re-derive corners from region polygon (frontend corners may have duplicates)
+        try:
+            dc = _corners_from_polygon_auto(poly_pts)
+            print(f"[warp-debug] region[{ri}] auto-derived corners from polygon ({len(poly_pts)} pts)")
+        except Exception as e:
+            print(f"[warp-debug] region[{ri}] auto-derive failed ({e}), using frontend corners")
+            dc = np.array(c, dtype=np.float32).reshape(4, 2)
         dc[:, 0] = np.clip(dc[:, 0], 0, W - 1)
         dc[:, 1] = np.clip(dc[:, 1], 0, H - 1)
         dst_raw_list.append(dc)
@@ -446,12 +607,17 @@ def _warp_texture_overlay_sync(
         except Exception as e:
             print(f"[warp-debug] failed to decode mask_base64: {e}")
 
-    # Auto-derive 4-corner perspective quad from polygon when corners aren't provided
+    # ALWAYS re-derive 4-corner perspective quad from polygon when available.
+    # Frontend corners can contain duplicates from old broken algorithms.
     use_polygon_early = bool(polygon) and isinstance(polygon, list) and len(polygon) >= 3
-    if len(corners) != 4 and use_polygon_early:
+    if use_polygon_early:
         poly_tmp = np.array(polygon, dtype=np.float32).reshape(-1, 2)
+        old_corners = corners
         corners = _corners_from_polygon_auto(poly_tmp).tolist()
-        print(f"[warp-debug] auto-derived 4 corners from polygon ({len(polygon)} pts)")
+        print(
+            f"[warp-debug] auto-derived 4 corners from polygon ({len(polygon)} pts): "
+            f"old={old_corners} new={[[round(c[0],1),round(c[1],1)] for c in corners]}"
+        )
     if len(corners) != 4:
         raise ValueError("corners must have 4 points (provide 4 corners or polygon with >=3 pts to auto-derive)")
 
@@ -489,6 +655,13 @@ def _warp_texture_overlay_sync(
 
     dst_pts_raw = np.array(corners, dtype=np.float32).reshape(4, 2)
     dst_pts = _order_points_tl_tr_br_bl(dst_pts_raw)
+    
+    # Проверка на вырожденный четырёхугольник (формула Гаусса)
+    x = dst_pts[:, 0]
+    y = dst_pts[:, 1]
+    area = 0.5 * np.abs(np.dot(x, np.roll(y, 1)) - np.dot(y, np.roll(x, 1)))
+    if area < 100:
+        raise ValueError(f"Degenerate quadrilateral detected: area={area:.1f}")
 
     src_pts = np.array([[0, 0], [W - 1, 0], [W - 1, H - 1], [0, H - 1]], dtype=np.float32)
     M = cv2.getPerspectiveTransform(src_pts, dst_pts)
@@ -774,116 +947,43 @@ async def estimate_homography(
 def compute_perspective_from_polygon(polygon: list) -> list:
     """
     Вычислить перспективные углы из формы полигона.
-    
-    Алгоритм:
-    1. Находим выпуклый четырехугольник (если полигон сложный)
-    2. Определяем "верх" и "низ" по размеру сторон
-    3. Вычисляем перспективную проекцию
+    Делегирует в _corners_from_polygon_auto (scan-line width analysis).
     """
     if len(polygon) < 3:
         return polygon
-    
-    # Преобразуем в numpy массив
-    pts = np.array(polygon, dtype=np.float32)
-    
-    if len(polygon) == 3:
-        # Для треугольника - расширяем до четырехугольника
-        # Самая длинная сторона = нижняя (ближе к камере)
+
+    pts = np.array(polygon, dtype=np.float32).reshape(-1, 2)
+
+    if len(pts) == 3:
+        # Для треугольника — расширяем до четырёхугольника:
+        # самая длинная сторона = нижняя (ближе к камере)
         edges = [
-            (dist(pts[0], pts[1]), [0, 1]),
-            (dist(pts[1], pts[2]), [1, 2]),
-            (dist(pts[2], pts[0]), [2, 0]),
+            (dist(pts[0], pts[1]), 0, 1),
+            (dist(pts[1], pts[2]), 1, 2),
+            (dist(pts[2], pts[0]), 2, 0),
         ]
         edges.sort(key=lambda x: x[0], reverse=True)
-        bottom_pair = edges[0][1]
-        
-        p1, p2 = pts[bottom_pair[0]], pts[bottom_pair[1]]
-        mid_bottom = (p1 + p2) / 2
-        height = edges[0][0] * 0.8
-        
-        # Верхняя точка
-        top_point = mid_bottom + np.array([0, -height])
-        
-        # Строим 4 угла
-        new_pts = np.array([
-            top_point + np.array([(p2[0] - p1[0]) * 0.3, 0]),  # top-left
-            top_point + np.array([(p2[0] - p1[0]) * 0.7, 0]),  # top-right (примерно)
-            p2,  # bottom-right
-            p1,  # bottom-left
+        _, i1, i2 = edges[0]
+        p1, p2 = pts[i1], pts[i2]
+        # Третья точка — вершина (она же определяет высоту)
+        other_idx = ({0, 1, 2} - {i1, i2}).pop()
+        apex = pts[other_idx]
+        # Проекция апекса на нижнюю сторону → два верхних угла
+        mid_top = (apex + (p1 + p2) / 2) / 2
+        half_w = dist(p1, p2) * 0.25
+        dx = p2[0] - p1[0]
+        dy = p2[1] - p1[1]
+        length = dist(p1, p2) + 1e-9
+        ux, uy = dx / length, dy / length
+        pts = np.array([
+            [mid_top[0] - ux * half_w, mid_top[1] - uy * half_w],
+            [mid_top[0] + ux * half_w, mid_top[1] + uy * half_w],
+            [float(p2[0]), float(p2[1])],
+            [float(p1[0]), float(p1[1])],
         ], dtype=np.float32)
-        
-        pts = new_pts
-    
-    # Для 4+ точек - основной алгоритм
-    # Находим выпуклый четырехугольник
-    hull = cv2.convexHull(pts.astype(np.int32))
-    if len(hull) >= 4:
-        hull_pts = hull[:, 0].astype(np.float32)
-        if len(hull_pts) > 4:
-            hull_pts = hull_pts[:4]
-    else:
-        hull_pts = pts[:4]
-    
-    # Сортируем по часовой стрелке
-    center = np.mean(hull_pts, axis=0)
-    angles = np.arctan2(hull_pts[:, 1] - center[1], hull_pts[:, 0] - center[0])
-    sorted_indices = np.argsort(angles)
-    sorted_pts = hull_pts[sorted_indices]
-    
-    # Теперь sorted_pts[0] - top-left (минимальная сумма координат)
-    # Но нам нужно определить верх/низ
-    
-    # Находим "нижнюю" сторону (самая длинная)
-    edges_len = [
-        dist(sorted_pts[0], sorted_pts[1]),
-        dist(sorted_pts[1], sorted_pts[2]),
-        dist(sorted_pts[2], sorted_pts[3]),
-        dist(sorted_pts[3], sorted_pts[0]),
-    ]
-    
-    # Определяем верхнюю и нижнюю стороны
-    # Если горизонтальные стороны (0-1 и 2-3) длиннее вертикальных
-    horizontal_sum = edges_len[0] + edges_len[2]
-    vertical_sum = edges_len[1] + edges_len[3]
-    
-    if horizontal_sum > vertical_sum:
-        # Горизонтальные стороны - верх и низ
-        bottom_width = edges_len[0]  # bottom edge (0-1)
-        top_width = edges_len[2]     # top edge (2-3)
-        
-        # Если top_width < bottom_width - это нормальная перспектива
-        # Если top_width >= bottom_width - стороны почти параллельны
-        
-        if top_width >= bottom_width * 0.7:
-            # Стороны почти параллельны - возвращаем как есть
-            return sorted_pts.tolist()
-        
-        # Вычисляем перспективные углы
-        # Идея: верхняя сторона должна быть уже (перспектива)
-        perspective_ratio = bottom_width / (top_width + 1e-6)
-        
-        # Центр
-        cx, cy = center
-        
-        # Корректируем верхнюю сторону
-        new_top_left = [
-            sorted_pts[2][0] + (sorted_pts[3][0] - sorted_pts[2][0]) * 0.5 * (1 - 1/perspective_ratio),
-            sorted_pts[2][1] + (sorted_pts[3][1] - sorted_pts[2][1]) * 0.5 * (1 - 1/perspective_ratio)
-        ]
-        new_top_right = [
-            sorted_pts[3][0] + (sorted_pts[2][0] - sorted_pts[3][0]) * 0.5 * (1 - 1/perspective_ratio),
-            sorted_pts[3][1] + (sorted_pts[2][1] - sorted_pts[3][1]) * 0.5 * (1 - 1/perspective_ratio)
-        ]
-        
-        return [
-            [float(new_top_left[0]), float(new_top_left[1])],
-            [float(new_top_right[0]), float(new_top_right[1])],
-            [float(sorted_pts[1][0]), float(sorted_pts[1][1])],
-            [float(sorted_pts[0][0]), float(sorted_pts[0][1])],
-        ]
-    
-    # Для вертикальных сторон - возвращаем как есть
-    return sorted_pts.tolist()
+
+    corners = _corners_from_polygon_auto(pts)
+    return corners.tolist()
 
 
 def dist(p1, p2):

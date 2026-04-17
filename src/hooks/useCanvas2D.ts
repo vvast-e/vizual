@@ -866,11 +866,8 @@ export function useCanvas2D({
       repeat: 'repeat' | 'repeat-x' | 'repeat-y' = 'repeat',
       options?: { clipPathOverride?: FabricObject }
     ) => {
-      console.log('[DEBUG] applyTexture: textureUrl =', textureUrl)
-      console.log('[DEBUG] applyTexture: textureScale =', textureScale)
       const canvas = canvasInstanceRef.current
       if (!canvas) {
-        console.log('[DEBUG] applyTexture: NO canvas')
         return
       }
       
@@ -912,13 +909,8 @@ export function useCanvas2D({
       _wallImageSize: { width: number; height: number } | null,
       selectedWallId: number | null
     ) => {
-      console.log('[DEBUG] applyTextureToWall: START')
-      console.log('[DEBUG] applyTextureToWall: textureUrl =', textureUrl)
-      console.log('[DEBUG] applyTextureToWall: wallCorners =', wallCorners)
-      console.log('[DEBUG] applyTextureToWall: selectedWallId =', selectedWallId)
       const canvas = canvasInstanceRef.current
       if (!canvas) {
-        console.log('[DEBUG] applyTextureToWall: NO canvas')
         return
       }
       
@@ -929,16 +921,11 @@ export function useCanvas2D({
 
       const sceneMode = useUIStore.getState().sceneMode
       const wall = selectedWallId != null ? useWallStore.getState().walls.find((w) => w.id === selectedWallId) : null
-      console.log('[DEBUG] applyTextureToWall: wall =', wall?.id, 'polygon length =', wall?.polygon?.length)
       const wallPolygon = wall?.polygon && wall.polygon.length >= 3 ? wall.polygon : undefined
-      console.log('[DEBUG] applyTextureToWall: wallPolygon =', wallPolygon)
 
       if (sceneMode === 'exterior' && wallPolygon && _wallImageSize) {
-        console.log('[DEBUG] applyTextureToWall: going to warpWallTexture')
         const bgTx = getBackgroundTransform()
-        console.log('[DEBUG] applyTextureToWall: bgTx =', bgTx)
         if (!bgTx) {
-          console.log('[DEBUG] applyTextureToWall: NO bgTx')
           return
         }
 
@@ -946,7 +933,6 @@ export function useCanvas2D({
         const regions =
           wall?.regions && wall.regions.length === 2 ? wall.regions : undefined
         const maskBase64 = useWallStore.getState().exteriorMaskBase64
-        console.log('[DEBUG] applyTextureToWall: maskBase64 =', maskBase64 ? 'exists' : 'null')
 
         const blob = await warpWallTexture({
           textureUrl,
@@ -958,19 +944,14 @@ export function useCanvas2D({
           opacity: 1,
           maskBase64,
         })
-        console.log('[DEBUG] applyTextureToWall: blob received')
-        console.log('[DEBUG] applyTextureToWall: creating Image')
         const img = new Image()
         const objectUrl = URL.createObjectURL(blob)
-        console.log('[DEBUG] applyTextureToWall: objectUrl =', objectUrl)
         img.src = objectUrl
         await new Promise((resolve, reject) => {
           img.onload = () => resolve(true)
           img.onerror = () => reject(new Error('Failed to load warped texture blob'))
         })
-        console.log('[DEBUG] applyTextureToWall: img loaded')
         URL.revokeObjectURL(objectUrl)
-        console.log('[DEBUG] applyTextureToWall: creating FabricImage')
 
         const fabricImg = new FabricImage(img, {
           left: bgTx.left,
@@ -988,16 +969,13 @@ export function useCanvas2D({
           flipX: bgTx.flipX,
           flipY: bgTx.flipY,
         })
-        console.log('[DEBUG] applyTextureToWall: FabricImage created')
         canvas.add(fabricImg)
         textureLayersRef.current[layerKey] = fabricImg
         setHasTextureLayer(true)
         canvas.requestRenderAll()
-        console.log('[DEBUG] applyTextureToWall: DONE')
         return
       }
 
-      console.log('[DEBUG] applyTextureToWall: using renderPerspectiveWallTexture (interior mode)')
       const { renderPerspectiveWallTexture } = await import('@/lib/texture-processor')
 
       const width = canvas.getWidth() ?? containerWidth
