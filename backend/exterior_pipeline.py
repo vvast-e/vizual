@@ -16,6 +16,7 @@ import numpy as np
 from sklearn.cluster import DBSCAN
 
 from facade_geometry import split_gable_roof_polygon
+from vp_detection import extract_manhattan_vps, project_to_horizon, project_verticals
 
 GDINO_URL = os.getenv("EXTERIOR_GDINO_URL", "http://127.0.0.1:8001/gdino")
 SAM_URL = os.getenv("EXTERIOR_SAM_URL", "http://127.0.0.1:8001/sam")
@@ -344,9 +345,9 @@ def _multi_scale_corner_candidates(mask: np.ndarray) -> list[dict]:
 
 EXTERIOR_LSD_BOTTOM_BAND_RATIO = float(os.getenv("EXTERIOR_LSD_BOTTOM_BAND_RATIO", "0.35"))
 EXTERIOR_LSD_BOTTOM_NEAR_RATIO = float(os.getenv("EXTERIOR_LSD_BOTTOM_NEAR_RATIO", "0.45"))
-EXTERIOR_LSD_XACC_SIGMA_RATIO = float(os.getenv("EXTERIOR_LSD_XACC_SIGMA_RATIO", "0.035"))
-EXTERIOR_LSD_XACC_MIN_PEAK_DIST_RATIO = float(os.getenv("EXTERIOR_LSD_XACC_MIN_PEAK_DIST_RATIO", "0.06"))
-EXTERIOR_LSD_XACC_MIN_PROM_FRAC = float(os.getenv("EXTERIOR_LSD_XACC_MIN_PROM_FRAC", "0.15"))
+EXTERIOR_LSD_XACC_SIGMA_RATIO = float(os.getenv("EXTERIOR_LSD_XACC_SIGMA_RATIO", "0.025"))
+EXTERIOR_LSD_XACC_MIN_PEAK_DIST_RATIO = float(os.getenv("EXTERIOR_LSD_XACC_MIN_PEAK_DIST_RATIO", "0.08"))
+EXTERIOR_LSD_XACC_MIN_PROM_FRAC = float(os.getenv("EXTERIOR_LSD_XACC_MIN_PROM_FRAC", "0.35"))
 EXTERIOR_LSD_XACC_MAX_SPLITS = max(1, int(os.getenv("EXTERIOR_LSD_XACC_MAX_SPLITS", "6")))
 
 
@@ -407,65 +408,82 @@ def _lsd_segments_in_bottom_band(
     band_mask_bin: np.ndarray,
     profile: dict,
     near_ratio: float,
+    wall_minus_holes: np.ndarray = None,
 ) -> list[dict]:
-    """Detect only stable lower-band segments close to the bottom contour."""
+    """Detect smart LSD segments: full-height for verticals, bottom-band for horizontals."""
     h, w = image_gray.shape[:2]
-    masked_gray = cv2.bitwise_and(image_gray, image_gray, mask=(band_mask_bin > 0).astype(np.uint8) * 255)
+    import cv2
+    import numpy as np
+    
+    mask_bin = wall_minus_holes if wall_minus_holes is not None else band_mask_bin
+    
+    k_size = int(max(11, 0.015 * w))
+    k_size += 1 if k_size % 2 == 0 else 0
+    k_smooth = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_size, k_size))
+    smoothed_mask = cv2.morphologyEx(mask_bin, cv2.MORPH_CLOSE, k_smooth)
+    smoothed_mask = cv2.morphologyEx(smoothed_mask, cv2.MORPH_OPEN, k_smooth)
+    
     lsd = cv2.createLineSegmentDetector(cv2.LSD_REFINE_ADV)
-    lines_raw, _, _, nfa = lsd.detect(masked_gray)
+    lines_raw, _, _, nfa = lsd.detect(image_gray)
     if lines_raw is None or len(lines_raw) == 0:
         return []
+        
     y_bottom = profile["y_bottom"]
     y_top = profile["y_top"]
     n_sample = max(3, EXTERIOR_LSD_SAMPLING_POINTS)
     near_ratio = float(np.clip(near_ratio, 0.1, 1.0))
     segments: list[dict] = []
+    
     for i in range(len(lines_raw)):
         x1, y1, x2, y2 = lines_raw[i][0]
         length = float(np.hypot(x2 - x1, y2 - y1))
-        if length < EXTERIOR_LSD_MIN_SEG_LEN_PX:
+        if length < max(20, EXTERIOR_LSD_MIN_SEG_LEN_PX * 0.5):
             continue
+            
+        theta = float(np.arctan2(y2 - y1, x2 - x1))
+        deg = np.degrees(theta) % 180
+        is_vert = 40 <= deg <= 140
+        
         inside_count = 0
         near_bottom_count = 0
         bottom_dists: list[float] = []
-        xs_local: list[float] = []
         ys_local: list[float] = []
+        
         for t in np.linspace(0.0, 1.0, n_sample):
             sx_f = float(x1 + t * (x2 - x1))
             sy_f = float(y1 + t * (y2 - y1))
             sx = max(0, min(w - 1, int(round(sx_f))))
             sy = max(0, min(h - 1, int(round(sy_f))))
-            if band_mask_bin[sy, sx] == 0 or y_bottom[sx] < 0 or y_top[sx] < 0:
+            
+            if y_bottom[sx] < 0 or y_top[sx] < 0:
                 continue
-            inside_count += 1
-            xs_local.append(sx_f)
+                
+            if smoothed_mask[sy, sx] > 0:
+                inside_count += 1
+                
             ys_local.append(sy_f)
             col_h = max(1, int(y_bottom[sx] - y_top[sx] + 1))
             band_h = max(12, int(round(col_h * EXTERIOR_LSD_BOTTOM_BAND_RATIO)))
             dist_to_bottom = float(y_bottom[sx] - sy_f)
             bottom_dists.append(dist_to_bottom)
+            
             if dist_to_bottom <= near_ratio * band_h:
                 near_bottom_count += 1
-        if inside_count < max(3, n_sample - 1):
+                
+        if inside_count < max(2, n_sample - 2):
             continue
-        if near_bottom_count < max(2, int(np.ceil(0.6 * inside_count))):
-            continue
-        theta = float(np.arctan2(y2 - y1, x2 - x1))
-        segments.append(
-            {
-                "x1": float(x1),
-                "y1": float(y1),
-                "x2": float(x2),
-                "y2": float(y2),
-                "length": length,
-                "theta": theta,
-                "nfa": float(nfa[i][0]) if nfa is not None else 0.0,
-                "inside_count": int(inside_count),
-                "near_bottom_count": int(near_bottom_count),
-                "bottom_dist_mean": round(float(np.mean(bottom_dists)) if bottom_dists else 0.0, 2),
-                "y_mean": round(float(np.mean(ys_local)) if ys_local else 0.0, 2),
-            }
-        )
+            
+        if not is_vert:
+            if near_bottom_count < max(2, int(np.ceil(0.5 * inside_count))):
+                continue
+                
+        segments.append({
+            "x1": float(x1), "y1": float(y1), "x2": float(x2), "y2": float(y2),
+            "length": length, "theta": theta, "nfa": float(nfa[i][0]) if nfa is not None else 0.0,
+            "inside_count": int(inside_count), "near_bottom_count": int(near_bottom_count),
+            "bottom_dist_mean": round(float(np.mean(bottom_dists)) if bottom_dists else 0.0, 2),
+            "y_mean": round(float(np.mean(ys_local)) if ys_local else 0.0, 2),
+        })
     return segments
 
 
@@ -502,38 +520,33 @@ def _segment_line_abc(seg: dict) -> tuple[float, float, float] | None:
     return a / norm, b / norm, c / norm
 
 
-def _split_segments_horizontal_vertical(segments: list[dict]) -> tuple[list[dict], list[dict]]:
-    """Split lower-band LSD segments into horizontal/vertical buckets."""
-    horizontals: list[dict] = []
-    verticals: list[dict] = []
-    for s in segments:
-        theta = float(np.degrees(float(s["theta"])))
-        theta = ((theta + 180.0) % 180.0)
-        # Perspective tolerant ranges
-        if theta <= 28.0 or theta >= 152.0:
-            horizontals.append(s)
-        elif 62.0 <= theta <= 118.0:
-            verticals.append(s)
-    return horizontals, verticals
+def _split_segments_horizontal_vertical(segments: list[dict]) -> tuple[list[dict], list[dict], dict]:
+    vp_vert, vert_segments, vp_h1, h1_segments, vp_h2, h2_segments = extract_manhattan_vps(segments)
+    horizontals = h1_segments + h2_segments
+    return horizontals, vert_segments, {"vp_vert": vp_vert, "vp_h1": vp_h1, "vp_h2": vp_h2}
 
 
-def _build_vertical_x_accumulator(vert_segments: list[dict], image_width: int) -> dict:
-    """Build weighted 1D x-accumulator from vertical segment support."""
+def _build_vertical_x_accumulator(vert_segments: list[dict], image_width: int, vps: dict = None) -> dict:
     width = int(max(1, image_width))
     raw_acc = np.zeros((width,), dtype=np.float64)
     support_by_x = np.zeros((width,), dtype=np.float64)
     total_support = 0.0
-    for seg in vert_segments:
-        x1 = float(seg["x1"])
-        x2 = float(seg["x2"])
+    vp_v = vps.get("vp_vert") if vps else None
+    vp_h1 = vps.get("vp_h1") if vps else None
+    vp_h2 = vps.get("vp_h2") if vps else None
+    horizon_line = project_to_horizon(vp_h1, vp_h2, image_width, image_width)
+    projected = project_verticals(vert_segments, vp_v, horizon_line, image_width)
+    for proj in projected:
+        seg = proj["seg"]
+        px = proj["x_proj"]
         w = max(1.0, float(seg.get("length", 0.0)))
         total_support += w
-        lx = int(np.clip(np.floor(min(x1, x2)), 0, width - 1))
-        rx = int(np.clip(np.ceil(max(x1, x2)), 0, width - 1))
-        if rx < lx:
-            lx, rx = rx, lx
-        raw_acc[lx : rx + 1] += w
-        support_by_x[lx : rx + 1] += 1.0
+        center_x = int(round(px))
+        lx = int(np.clip(center_x - 1, 0, width - 1))
+        rx = int(np.clip(center_x + 1, 0, width - 1))
+        if lx <= rx:
+            raw_acc[lx : rx + 1] += w / (rx - lx + 1)
+            support_by_x[lx : rx + 1] += 1.0
     return {
         "raw_acc": raw_acc,
         "support_by_x": support_by_x,
@@ -597,6 +610,65 @@ def _detect_x_peaks(acc_smooth: np.ndarray, min_dist_px: int, min_prom_abs: floa
     return kept
 
 
+def _filter_peaks_by_contour_kinks(peaks: list[dict], profile: dict, image_width: int) -> list[dict]:
+    import numpy as np
+    if not peaks or not profile or not profile.get("valid"): return peaks
+    y_top, y_bottom = profile.get("y_top"), profile.get("y_bottom")
+    if y_top is None or y_bottom is None: return peaks
+    
+    filtered_peaks = []
+    D_far = max(30, int(0.04 * image_width))
+    D_near = 10
+    T = max(8.0, 0.01 * image_width)
+    search_radius = max(15, int(0.03 * image_width))
+    
+    for p in peaks:
+        px = int(p["x"])
+        if px - D_far < 0 or px + D_far >= len(y_top):
+            filtered_peaks.append(p)
+            continue
+            
+        s_left = max(0, px - search_radius)
+        s_right = min(len(y_top), px + search_radius + 1)
+        valid_yt = [y for y in y_top[s_left : s_right] if y >= 0]
+        
+        yt_center = float(np.median(y_top[px - 3 : px + 4]))
+        yb_center = float(np.median(y_bottom[px - 3 : px + 4]))
+        if yt_center < 0 or yb_center < 0:
+            filtered_peaks.append(p)
+            continue
+            
+        valley_y = float(np.max(valid_yt)) if valid_yt else yt_center
+        gable_y = float(np.min(valid_yt)) if valid_yt else yt_center
+        
+        left_yt = [y for y in y_top[px - D_far : px - D_near] if y >= 0]
+        right_yt = [y for y in y_top[px + D_near : px + D_far] if y >= 0]
+        left_yb = [y for y in y_bottom[px - D_far : px - D_near] if y >= 0]
+        right_yb = [y for y in y_bottom[px + D_near : px + D_far] if y >= 0]
+        
+        if len(left_yt) < D_far // 2 or len(right_yt) < D_far // 2:
+            filtered_peaks.append(p)
+            continue
+            
+        yt_L = float(np.median(left_yt))
+        yt_R = float(np.median(right_yt))
+        yb_L = float(np.median(left_yb))
+        yb_R = float(np.median(right_yb))
+        
+        is_gable = (gable_y < yt_L - T) and (gable_y < yt_R - T)
+        is_valley = (valley_y > yt_L + T) and (valley_y > yt_R + T)
+        is_foundation_kink = abs(yb_center - yb_L) > T and abs(yb_center - yb_R) > T and ((yb_center - yb_L) * (yb_center - yb_R) > 0)
+        
+        if is_gable and not is_foundation_kink:
+            continue
+            
+        if is_valley or is_foundation_kink:
+            p["prominence"] = float(p["prominence"]) * 5.0
+            p["height"] = float(p["height"]) * 5.0
+            
+        filtered_peaks.append(p)
+    return filtered_peaks
+
 def _peaks_to_split_candidates(
     peaks: list[dict],
     acc_smooth: np.ndarray,
@@ -609,8 +681,8 @@ def _peaks_to_split_candidates(
         return [], []
     w = int(max(1, image_width))
     max_val = float(np.max(acc_smooth)) if acc_smooth.size > 0 else 0.0
-    min_height_abs = float(max(1e-6, 0.10 * max_val))
-    min_prom_abs = float(max(1e-6, 0.08 * max_val))
+    min_height_abs = float(max(3.0, 0.35 * max_val))
+    min_prom_abs = float(max(2.5, 0.30 * max_val))
     xs: list[float] = []
     diag: list[dict] = []
     for p in peaks:
@@ -1365,6 +1437,7 @@ def _split_by_rgb_lsd_corners(
     image_width: int,
     image_height: int,
     min_area: int,
+    wall_minus_holes: np.ndarray = None,
 ) -> tuple[list[dict] | None, dict]:
     """Bottom-band RGB+LSD cascade: use only stable lower facade lines and their intersections."""
     dbg: dict = {"enabled": True, "used": False, "method": "rgb_lsd_bottom_band_xacc_peaks"}
@@ -1383,14 +1456,14 @@ def _split_by_rgb_lsd_corners(
     dbg["bottom_band_ratio"] = round(float(EXTERIOR_LSD_BOTTOM_BAND_RATIO), 3)
 
     # Stage 1: LSD only inside the adaptive lower band.
-    segments = _lsd_segments_in_bottom_band(gray, band_mask, profile, EXTERIOR_LSD_BOTTOM_NEAR_RATIO)
+    segments = _lsd_segments_in_bottom_band(gray, band_mask, profile, EXTERIOR_LSD_BOTTOM_NEAR_RATIO, wall_minus_holes)
     dbg["lsd_segments_total"] = len(segments)
     if len(segments) < 4:
         dbg["error"] = f"too few LSD segments: {len(segments)}"
         return None, dbg
 
     # Stage 2: split lower-band LSD segments by orientation.
-    horiz_segments, vert_segments = _split_segments_horizontal_vertical(segments)
+    horiz_segments, vert_segments, vps = _split_segments_horizontal_vertical(segments)
     dbg["direction_families_total"] = 2 if (horiz_segments or vert_segments) else 0
     dbg["clusters_total"] = int((1 if horiz_segments else 0) + (1 if vert_segments else 0))
     dbg["direction_families_detail"] = [
@@ -1412,7 +1485,7 @@ def _split_by_rgb_lsd_corners(
         return None, dbg
 
     # Stage 3: dominant vertical axes through weighted 1D x-accumulator.
-    xacc = _build_vertical_x_accumulator(vert_segments, image_width)
+    xacc = _build_vertical_x_accumulator(vert_segments, image_width, vps)
     raw_acc = xacc["raw_acc"]
     total_support = float(xacc["total_support"])
     sigma_px = max(2.0, EXTERIOR_LSD_XACC_SIGMA_RATIO * float(image_width))
@@ -1421,6 +1494,7 @@ def _split_by_rgb_lsd_corners(
     max_acc = float(np.max(smooth_acc)) if smooth_acc.size > 0 else 0.0
     min_prom_abs = max(1.0, EXTERIOR_LSD_XACC_MIN_PROM_FRAC * max_acc)
     peaks_raw = _detect_x_peaks(smooth_acc, min_dist_px=min_dist_px, min_prom_abs=min_prom_abs)
+    peaks_raw = _filter_peaks_by_contour_kinks(peaks_raw, profile, image_width)
     split_x_raw, kept_peaks_diag = _peaks_to_split_candidates(
         peaks_raw,
         smooth_acc,
@@ -3728,73 +3802,6 @@ async def run_exterior_pipeline(image_bytes: bytes, image_width: int, image_heig
     t0 = time.perf_counter()
     image_bgr = _decode_image_bgr(image_bytes, image_width, image_height)
     _stage("decode_image", t0, ok=image_bgr is not None)
-    min_area = int(image_width * image_height * EXTERIOR_MIN_WALL_AREA_RATIO)
-    comp_count = _count_large_components(wall_for_split, min_area)
-    split_method_geo = "geometry_fallback"
-    walls_geo: list[dict]
-    seam_debug: dict = {}
-    geom_cascade_debug: dict = {"enabled": EXTERIOR_GEOM_CASCADE_ENABLE, "used": False}
-    if comp_count <= 1:
-        t0 = time.perf_counter()
-        walls_seam, seam_debug = _auto_split_by_corner_seam(
-            wall_for_split, image_bgr, building_bbox, image_width, image_height
-        )
-        _stage(
-            "split_seam",
-            t0,
-            used=bool(walls_seam),
-            walls_count=len(walls_seam or []),
-            candidates=int(seam_debug.get("candidates_count", 0)),
-            best_score=round(float(seam_debug.get("best_score", 0.0)), 4),
-        )
-        if walls_seam and len(walls_seam) >= 2:
-            walls_geo = walls_seam
-            split_method_geo = "seam"
-        else:
-            walls_geom_rel: list[dict] | None = None
-            if EXTERIOR_GEOM_CASCADE_ENABLE:
-                t0 = time.perf_counter()
-                walls_geom_rel, geom_cascade_debug = _split_by_rgb_lsd_corners(
-                    wall_for_split, image_bgr, image_width, image_height, min_area,
-                )
-                _stage(
-                    "split_geom_cascade",
-                    t0,
-                    used=bool(walls_geom_rel),
-                    walls_count=len(walls_geom_rel or []),
-                    lsd_segments=int(geom_cascade_debug.get("lsd_segments_total", 0)),
-                    clusters=int(geom_cascade_debug.get("clusters_total", 0)),
-                    intersections=int(geom_cascade_debug.get("intersections_total", 0)),
-                    splits_applied=len(geom_cascade_debug.get("split_x_candidates_after_nms") or []),
-                )
-            if walls_geom_rel and len(walls_geom_rel) >= 2:
-                walls_geo = walls_geom_rel
-                split_method_geo = "geom_rgb_lsd_bottom_band_multiple_splits"
-            else:
-                t0 = time.perf_counter()
-                walls_kink = _split_by_bottom_contour_kink_once(
-                    wall_for_split, image_width, image_height, min_area
-                )
-                _stage("split_bottom_kink", t0, used=bool(walls_kink), walls_count=len(walls_kink or []))
-                if walls_kink and len(walls_kink) >= 2:
-                    walls_geo = walls_kink
-                    split_method_geo = "bottom_kink"
-                else:
-                    component_masks = _component_masks_from_connected_components(wall_for_split, min_area)
-                    walls_geo = _build_walls_from_component_masks(component_masks)
-                    split_method_geo = "connected_components_fallback"
-                    _stage(
-                        "split_connected_components_fallback",
-                        time.perf_counter(),
-                        walls_count=len(walls_geo),
-                    )
-    else:
-        t0 = time.perf_counter()
-        component_masks = _component_masks_from_connected_components(wall_for_split, min_area)
-        walls_geo = _build_walls_from_component_masks(component_masks)
-        split_method_geo = "connected_components"
-        _stage("split_connected_components", t0, walls_count=len(walls_geo), components=int(comp_count))
-
     t0 = time.perf_counter()
     openings = await detect_openings_bboxes(image_bytes, building_bbox)
     _stage(
@@ -3839,6 +3846,74 @@ async def run_exterior_pipeline(image_bytes: bytes, image_width: int, image_heig
     t0 = time.perf_counter()
     wall_minus_holes = postprocess_masks(wall_mask, holes_mask)
     _stage("postprocess_wall_minus_holes", t0, nonzero=int(np.count_nonzero(wall_minus_holes)))
+    min_area = int(image_width * image_height * EXTERIOR_MIN_WALL_AREA_RATIO)
+    comp_count = _count_large_components(wall_for_split, min_area)
+    split_method_geo = "geometry_fallback"
+    walls_geo: list[dict]
+    seam_debug: dict = {}
+    geom_cascade_debug: dict = {"enabled": EXTERIOR_GEOM_CASCADE_ENABLE, "used": False}
+    if comp_count <= 1:
+        t0 = time.perf_counter()
+        walls_seam, seam_debug = _auto_split_by_corner_seam(
+            wall_for_split, image_bgr, building_bbox, image_width, image_height
+        )
+        _stage(
+            "split_seam",
+            t0,
+            used=bool(walls_seam),
+            walls_count=len(walls_seam or []),
+            candidates=int(seam_debug.get("candidates_count", 0)),
+            best_score=round(float(seam_debug.get("best_score", 0.0)), 4),
+        )
+        if walls_seam and len(walls_seam) >= 2:
+            walls_geo = walls_seam
+            split_method_geo = "seam"
+        else:
+            walls_geom_rel: list[dict] | None = None
+            if EXTERIOR_GEOM_CASCADE_ENABLE:
+                t0 = time.perf_counter()
+                walls_geom_rel, geom_cascade_debug = _split_by_rgb_lsd_corners(
+                    wall_for_split, image_bgr, image_width, image_height, min_area, wall_minus_holes
+                )
+                _stage(
+                    "split_geom_cascade",
+                    t0,
+                    used=bool(walls_geom_rel),
+                    walls_count=len(walls_geom_rel or []),
+                    lsd_segments=int(geom_cascade_debug.get("lsd_segments_total", 0)),
+                    clusters=int(geom_cascade_debug.get("clusters_total", 0)),
+                    intersections=int(geom_cascade_debug.get("intersections_total", 0)),
+                    splits_applied=len(geom_cascade_debug.get("split_x_candidates_after_nms") or []),
+                )
+            if walls_geom_rel and len(walls_geom_rel) >= 2:
+                walls_geo = walls_geom_rel
+                split_method_geo = "geom_rgb_lsd_bottom_band_multiple_splits"
+            else:
+                t0 = time.perf_counter()
+                walls_kink = _split_by_bottom_contour_kink_once(
+                    wall_for_split, image_width, image_height, min_area
+                )
+                _stage("split_bottom_kink", t0, used=bool(walls_kink), walls_count=len(walls_kink or []))
+                if walls_kink and len(walls_kink) >= 2:
+                    walls_geo = walls_kink
+                    split_method_geo = "bottom_kink"
+                else:
+                    component_masks = _component_masks_from_connected_components(wall_for_split, min_area)
+                    walls_geo = _build_walls_from_component_masks(component_masks)
+                    split_method_geo = "connected_components_fallback"
+                    _stage(
+                        "split_connected_components_fallback",
+                        time.perf_counter(),
+                        walls_count=len(walls_geo),
+                    )
+    else:
+        t0 = time.perf_counter()
+        component_masks = _component_masks_from_connected_components(wall_for_split, min_area)
+        walls_geo = _build_walls_from_component_masks(component_masks)
+        split_method_geo = "connected_components"
+        _stage("split_connected_components", t0, walls_count=len(walls_geo), components=int(comp_count))
+
+
 
     # Упрощённый режим: для отладки seam/deometry НЕ переключаемся на depth-арбитр.
     # Финальный результат = геометрия/seam, чтобы поведение было предсказуемым.
