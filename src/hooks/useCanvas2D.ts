@@ -860,6 +860,18 @@ export function useCanvas2D({
     [getBackgroundBounds]
   )
 
+
+  const clearTextureFromWall = useCallback((wallId: number | null) => {
+    const canvas = canvasInstanceRef.current
+    if (!canvas) return
+    const layerKey = wallId != null ? String(wallId) : 'background'
+    if (textureLayersRef.current[layerKey]) {
+      canvas.remove(textureLayersRef.current[layerKey])
+      delete textureLayersRef.current[layerKey]
+      canvas.requestRenderAll()
+    }
+  }, [])
+
   const applyTexture = useCallback(
     async (
       textureUrl: string,
@@ -1249,6 +1261,7 @@ export function useCanvas2D({
     getBackgroundBounds,
     setWallOverlays,
     setExteriorMaskOverlay,
+    clearTextureFromWall,
     applyTexture,
     applyTextureToWall,
     highlightSelectedWall,

@@ -1,5 +1,5 @@
 import { useCallback } from 'react'
-import { Eye, EyeOff, Trash2, Plus, Square } from 'lucide-react'
+import { Eye, EyeOff, Trash2, Plus, Square, Eraser } from 'lucide-react'
 import { useWallStore } from '@/store/useWallStore'
 import { useUIStore } from '@/store/useUIStore'
 import { useMaterialStore } from '@/store/useMaterialStore'
@@ -29,6 +29,7 @@ export function WallsPanel({ onStartCustomMask, isDrawingCustomMask, onCancelCus
   const removeWall = useWallStore((s) => s.removeWall)
   const wallVisibility = useUIStore((s) => s.wallVisibility)
   const toggleWallVisibility = useUIStore((s) => s.toggleWallVisibility)
+  const setWallTexture = useWallStore((s) => s.setWallTexture)
   const selectedMaterial = useMaterialStore((s) => s.selectedMaterial)
 
   const handleWallClick = useCallback(
@@ -89,6 +90,19 @@ export function WallsPanel({ onStartCustomMask, isDrawingCustomMask, onCancelCus
                     >
                       {isVisible ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
                     </button>
+                    {hasTexture && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setWallTexture(wall.id, null)
+                        }}
+                        className="rounded p-1 text-gray-400 transition-colors hover:bg-orange-100 hover:text-orange-500"
+                        title="Очистить текстуру"
+                      >
+                        <Eraser className="h-3.5 w-3.5" />
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={(e) => {

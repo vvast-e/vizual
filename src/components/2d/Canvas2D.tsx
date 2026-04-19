@@ -144,6 +144,7 @@ export function Canvas2D({
     loadPhotoFromDataUrl,
     setWallOverlays,
     setExteriorMaskOverlay,
+    clearTextureFromWall,
     applyTexture,
     applyTextureToWall,
     highlightSelectedWall,
@@ -209,6 +210,7 @@ export function Canvas2D({
     exteriorMaskBase64,
     wallImageSize,
     setExteriorMaskOverlay,
+    clearTextureFromWall,
   ])
 
   useEffect(() => {
@@ -242,6 +244,17 @@ export function Canvas2D({
     }
     return rawUrl
   }, [selectedColor, colorizeOpacity, getColorizedTextureUrl])
+
+
+  // Sync wall textures removals
+  useEffect(() => {
+    if (!isReady) return
+    walls.forEach(w => {
+      if (wallTextures[w.id] == null) {
+        clearTextureFromWall(w.id)
+      }
+    })
+  }, [wallTextures, isReady, clearTextureFromWall, walls])
 
   const handleApplyTexture = useCallback(async () => {
     const rawUrl = selectedMaterial?.texture.url
