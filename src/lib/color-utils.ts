@@ -82,12 +82,15 @@ export function applyHsvColorShift(
   const data = imageData.data
 
   const [tr, tg, tb] = hexToRgb(targetHex)
-  const [tH, tS] = rgbToHsv(tr, tg, tb)
+  const [tH, tS, tV] = rgbToHsv(tr, tg, tb)
   const t = Math.max(0, Math.min(1, intensity))
 
-  // Белый (#ffffff) => tS=0 — значит просто обесцвечиваем, но не трогаем V.
   // Если intensity=0, ничего не делаем.
   if (t < 0.001) return canvas
+
+  // Безопасная граница для режима Hard Light, чтобы чистый белый или чёрный
+  // цвет не делал текстуру полностью плоской (не убивал весь контраст).
+  const safeTv = Math.max(0.1, Math.min(0.9, tV))
 
   for (let i = 0; i < data.length; i += 4) {
     const r = data[i]
@@ -101,8 +104,15 @@ export function applyHsvColorShift(
     const newH = tH
     // Новый S = lerp(originalS, targetS, intensity)
     const newS = oS + (tS - oS) * t
-    // V — оригинальный (сохраняет текстуру)
-    const newV = oV
+    
+    // Сдвиг яркости (V) через режим Hard Light
+    let blendV = oV
+    if (safeTv < 0.5) {
+      blendV = 2.0 * oV * safeTv
+    } else {
+      blendV = 1.0 - 2.0 * (1.0 - oV) * (1.0 - safeTv)
+    }
+    const newV = oV + (blendV - oV) * t
 
     const [nr, ng, nb] = hsvToRgb(newH, newS, newV)
     data[i] = nr
