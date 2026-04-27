@@ -26,7 +26,7 @@ export function ColorWidget({ open, onClose }: ColorWidgetProps) {
     fetchColors({
       visible_only: true,
       scene_category: sceneMode,
-      page_size: 200,
+      page_size: 100,
     })
       .then((list) => {
         if (cancelled) return
