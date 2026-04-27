@@ -9,7 +9,6 @@ import json
 import time
 import hashlib
 import shutil
-import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -17,7 +16,7 @@ import cv2
 import numpy as np
 from typing import Optional
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Header
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
@@ -26,7 +25,10 @@ from PIL import Image
 # Ensure we run in backend directory so relative paths in submodules work
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 os.chdir(BACKEND_DIR)
-PROJECT_ROOT = os.path.abspath(os.path.join(BACKEND_DIR, ".."))
+PROJECT_ROOT = os.environ.get(
+    "PROJECT_ROOT",
+    os.path.abspath(os.path.join(BACKEND_DIR, "..")),
+)
 WARP_DEBUG_DIR = os.path.join(PROJECT_ROOT, "warp-debug")
 WARP_DEBUG_SAVE = True
 TEXTURES_DIR = os.path.join(PROJECT_ROOT, "public", "textures")
@@ -822,6 +824,25 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Catalog (PostgreSQL): materials, colors, admins
+import catalog_routes  # noqa: E402
+
+app.include_router(catalog_routes.router)
+
+# Uploaded textures/colors (dev: also served by Vite from /public; Docker: proxy to backend)
+os.makedirs(os.path.join(PROJECT_ROOT, "public", "textures"), exist_ok=True)
+os.makedirs(os.path.join(PROJECT_ROOT, "public", "colors"), exist_ok=True)
+app.mount(
+    "/textures",
+    StaticFiles(directory=os.path.join(PROJECT_ROOT, "public", "textures")),
+    name="textures",
+)
+app.mount(
+    "/colors",
+    StaticFiles(directory=os.path.join(PROJECT_ROOT, "public", "colors")),
+    name="colors",
+)
+
 
 @app.post("/api/detect-walls")
 async def detect_walls(file: UploadFile = File(...)):
@@ -848,7 +869,7 @@ async def detect_walls(file: UploadFile = File(...)):
         result = await asyncio.to_thread(_detect_walls_sync, tmp_path)
         return result
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=repr(e))
     finally:
         try:
             os.unlink(tmp_path)
@@ -908,7 +929,7 @@ async def detect_exterior(file: UploadFile = File(...)):
             pass
         return result
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=repr(e))
 
 
 @app.post("/api/exterior/split")
@@ -994,7 +1015,7 @@ async def estimate_homography(
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="Invalid JSON in polygon")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail=repr(e)) from e
 
 
 def compute_perspective_from_polygon(polygon: list) -> list:
@@ -1156,110 +1177,3 @@ async def warp_wall_texture(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-# ─── Materials CRUD API ───────────────────────────────────────────────
-
-ADMIN_LOGIN = "admin"
-ADMIN_PASSWORD = "1Qst2la#"
-
-
-def _check_admin_auth(authorization: str | None) -> None:
-    """Validate Basic auth header for admin endpoints."""
-    if not authorization or not authorization.startswith("Basic "):
-        raise HTTPException(status_code=401, detail="Authorization required")
-    import base64
-    try:
-        decoded = base64.b64decode(authorization.split(" ", 1)[1]).decode("utf-8")
-        login, password = decoded.split(":", 1)
-    except Exception:
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-    if login != ADMIN_LOGIN or password != ADMIN_PASSWORD:
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-
-
-@app.get("/api/materials")
-async def list_materials():
-    """List all texture files from public/textures/ recursively."""
-    os.makedirs(TEXTURES_DIR, exist_ok=True)
-    materials: list[dict] = []
-    tex_path = Path(TEXTURES_DIR)
-    for f in sorted(tex_path.rglob("*")):
-        if f.is_file() and f.suffix.lower() in ALLOWED_TEX_EXTS:
-            rel = f.relative_to(tex_path).as_posix()
-            # Skip swatch thumbnails
-            if "/swatches/" in rel or rel.startswith("swatches/"):
-                continue
-            name = f.stem.replace("-", " ").replace("_", " ").title()
-            category = rel.split("/")[0] if "/" in rel else "other"
-            materials.append({
-                "id": rel.replace("/", "-").replace(".", "-"),
-                "name": name,
-                "filename": rel,
-                "category": category,
-                "url": f"/textures/{rel}",
-            })
-    return {"materials": materials}
-
-
-@app.post("/api/materials")
-async def upload_material(
-    file: UploadFile = File(...),
-    name: str = Form(""),
-    category: str = Form("other"),
-    authorization: str | None = Form(None),
-):
-    """Upload a new texture file. Requires admin auth."""
-    _check_admin_auth(f"Basic {authorization}" if authorization else None)
-
-    if not file.content_type or not file.content_type.startswith("image/"):
-        raise HTTPException(status_code=400, detail="Expected an image file")
-
-    ext = Path(file.filename or "texture.png").suffix.lower()
-    if ext not in ALLOWED_TEX_EXTS:
-        raise HTTPException(status_code=400, detail=f"Unsupported file type: {ext}")
-
-    # Sanitize category directory
-    safe_category = "".join(c for c in category if c.isalnum() or c in "-_").strip() or "other"
-    cat_dir = os.path.join(TEXTURES_DIR, safe_category)
-    os.makedirs(cat_dir, exist_ok=True)
-
-    # Generate unique filename
-    safe_name = "".join(c for c in (name or file.filename or "texture") if c.isalnum() or c in "-_ ").strip().replace(" ", "-").lower()
-    if not safe_name:
-        safe_name = uuid.uuid4().hex[:8]
-    dest_name = f"{safe_name}{ext}"
-    dest_path = os.path.join(cat_dir, dest_name)
-
-    # Avoid overwrite
-    counter = 1
-    while os.path.exists(dest_path):
-        dest_name = f"{safe_name}-{counter}{ext}"
-        dest_path = os.path.join(cat_dir, dest_name)
-        counter += 1
-
-    contents = await file.read()
-    with open(dest_path, "wb") as f:
-        f.write(contents)
-
-    rel = f"{safe_category}/{dest_name}"
-    return {
-        "id": rel.replace("/", "-").replace(".", "-"),
-        "name": name or safe_name,
-        "filename": rel,
-        "category": safe_category,
-        "url": f"/textures/{rel}",
-    }
-
-
-@app.delete("/api/materials/{filename:path}")
-async def delete_material(filename: str, authorization: str | None = Header(None)):
-    """Delete a texture file. Requires admin auth via Authorization header."""
-    _check_admin_auth(authorization)
-    safe = filename.replace("..", "").replace("\\", "/").strip("/")
-    file_path = os.path.join(TEXTURES_DIR, safe)
-    if not os.path.isfile(file_path):
-        raise HTTPException(status_code=404, detail="File not found")
-    try:
-        os.remove(file_path)
-    except OSError as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    return {"deleted": safe}

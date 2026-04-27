@@ -19,6 +19,10 @@ export interface Texture {
 export interface Color {
   hex: string
   name?: string
+  /** Идентификатор из API (для быстрого доступа и удаления) */
+  id?: string
+  /** Превью-изображение (каталог цветов из БД) */
+  swatchUrl?: string
 }
 
 export interface Material {

@@ -3,7 +3,7 @@ import { TEXTURES_BASE_PATH } from './constants'
 
 /**
  * Каталог материалов по умолчанию (пути к текстурам в public).
- * Файлы нужно положить в public/textures/... или заменить URL на реальные.
+ * Используется как fallback, если GET /api/materials не вернул данных или недоступен.
  */
 export const DEFAULT_MATERIALS: Material[] = [
   {

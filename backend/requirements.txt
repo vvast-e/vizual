@@ -18,3 +18,10 @@ onegan @ git+https://github.com/leVirve/OneGan
 transformers==4.40.0
 httpx>=0.25.0
 scikit-learn>=1.3.0
+
+# Admin catalog + PostgreSQL
+sqlalchemy>=2.0.0
+alembic>=1.13.0
+psycopg2-binary>=2.9.9
+bcrypt>=4.1.0
+python-jose[cryptography]>=3.3.0

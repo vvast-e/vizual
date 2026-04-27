@@ -1,3 +1,4 @@
+/** Локальные пресеты — fallback, если API материалов пустой или недоступен. */
 import type { Material } from '@/types/material'
 
 export type MockMaterialCategory = 'vagonka' | 'brus' | 'blockhouse' | 'boards' | 'planken'

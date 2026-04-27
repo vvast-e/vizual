@@ -1,7 +1,9 @@
-import { useState, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useColorize } from '@/hooks/useColorize'
 import { MOCK_COLORS, COLOR_CATEGORIES, type MockColorCategory } from '@/data/mock-colors'
 import { useMaterialStore } from '@/store/useMaterialStore'
+import { useUIStore } from '@/store/useUIStore'
+import { colorDtoToColor, fetchColors } from '@/lib/materials-api'
 import type { Color } from '@/types/material'
 
 interface ColorWidgetProps {
@@ -9,20 +11,62 @@ interface ColorWidgetProps {
   onClose: () => void
 }
 
+type PaletteState =
+  | { kind: 'loading' }
+  | { kind: 'api'; colors: Color[] }
+  | { kind: 'mock' }
+
 export function ColorWidget({ open, onClose }: ColorWidgetProps) {
+  const sceneMode = useUIStore((s) => s.sceneMode)
   const [search, setSearch] = useState('')
   const [category, setCategory] = useState<MockColorCategory | 'all'>('all')
+  const [palette, setPalette] = useState<PaletteState>({ kind: 'loading' })
   const { setSelectedColor } = useColorize()
   const setSelectedMaterial = useMaterialStore((s) => s.setSelectedMaterial)
   const addQuickAccessColor = useMaterialStore((s) => s.addQuickAccessColor)
 
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    setPalette({ kind: 'loading' })
+    fetchColors({
+      visible_only: true,
+      scene_category: sceneMode,
+      page_size: 200,
+    })
+      .then((list) => {
+        if (cancelled) return
+        if (list.length > 0) {
+          setPalette({ kind: 'api', colors: list.map(colorDtoToColor) })
+        } else {
+          setPalette({ kind: 'mock' })
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setPalette({ kind: 'mock' })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [open, sceneMode])
+
+  const colors: Color[] = useMemo(() => {
+    if (palette.kind === 'api') return palette.colors
+    if (palette.kind === 'mock') return MOCK_COLORS
+    return []
+  }, [palette])
+
+  const showCategoryFilter = palette.kind === 'mock'
+
   const filtered = useMemo(() => {
-    return MOCK_COLORS.filter((c) => {
+    return colors.filter((c) => {
       const matchSearch = !search || c.name?.toLowerCase().includes(search.toLowerCase())
-      const matchCategory = category === 'all' || c.category === category
+      if (!showCategoryFilter) return matchSearch
+      const cat = (c as { category?: MockColorCategory }).category
+      const matchCategory = category === 'all' || cat === category
       return matchSearch && matchCategory
     })
-  }, [search, category])
+  }, [colors, search, category, showCategoryFilter])
 
   const handleSelect = (color: Color) => {
     setSelectedColor(color)
@@ -35,11 +79,10 @@ export function ColorWidget({ open, onClose }: ColorWidgetProps) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
-      <div 
-        className="w-[600px] max-h-[80vh] rounded-xl bg-white shadow-2xl" 
+      <div
+        className="w-[600px] max-h-[80vh] rounded-xl bg-white shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Header */}
         <div className="flex items-center justify-between border-b border-gray-200 px-5 py-4">
           <h2 className="text-lg font-semibold text-gray-900">Цвета</h2>
           <button
@@ -53,10 +96,14 @@ export function ColorWidget({ open, onClose }: ColorWidgetProps) {
           </button>
         </div>
 
-        {/* Search */}
         <div className="px-5 py-3">
           <div className="relative">
-            <svg className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg
+              className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-gray-400"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
             </svg>
             <input
@@ -69,41 +116,51 @@ export function ColorWidget({ open, onClose }: ColorWidgetProps) {
           </div>
         </div>
 
-        {/* Categories */}
-        <div className="flex gap-2 px-5 pb-3">
-          {COLOR_CATEGORIES.map((cat) => (
-            <button
-              key={cat.value}
-              type="button"
-              onClick={() => setCategory(cat.value)}
-              className={`rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
-                category === cat.value
-                  ? 'bg-gray-900 text-white'
-                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-              }`}
-            >
-              {cat.label}
-            </button>
-          ))}
-        </div>
+        {showCategoryFilter && (
+          <div className="flex gap-2 px-5 pb-3">
+            {COLOR_CATEGORIES.map((cat) => (
+              <button
+                key={cat.value}
+                type="button"
+                onClick={() => setCategory(cat.value)}
+                className={`rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
+                  category === cat.value
+                    ? 'bg-gray-900 text-white'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                }`}
+              >
+                {cat.label}
+              </button>
+            ))}
+          </div>
+        )}
 
-        {/* Grid */}
         <div className="max-h-[50vh] overflow-y-auto px-5 pb-5">
-          {filtered.length === 0 ? (
+          {palette.kind === 'loading' ? (
+            <p className="py-8 text-center text-gray-500">Загрузка каталога…</p>
+          ) : filtered.length === 0 ? (
             <p className="py-8 text-center text-gray-500">Цвета не найдены</p>
           ) : (
             <div className="grid grid-cols-5 gap-3">
               {filtered.map((color, idx) => (
                 <button
-                  key={idx}
+                  key={color.id ?? `${color.hex}-${idx}`}
                   type="button"
                   onClick={() => handleSelect(color)}
                   className="flex flex-col items-center gap-2 rounded-lg border-2 border-gray-200 p-2 transition-colors hover:border-gray-400 hover:bg-gray-50"
                 >
-                  <div 
-                    className="h-12 w-12 rounded-lg border border-gray-300 shadow-sm" 
-                    style={{ backgroundColor: color.hex }}
-                  />
+                  {color.swatchUrl ? (
+                    <img
+                      src={color.swatchUrl}
+                      alt=""
+                      className="h-12 w-12 rounded-lg border border-gray-300 object-cover shadow-sm"
+                    />
+                  ) : (
+                    <div
+                      className="h-12 w-12 rounded-lg border border-gray-300 shadow-sm"
+                      style={{ backgroundColor: color.hex }}
+                    />
+                  )}
                   <span className="text-xs font-medium text-gray-700">{color.name}</span>
                 </button>
               ))}

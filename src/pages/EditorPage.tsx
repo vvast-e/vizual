@@ -204,26 +204,37 @@ export function EditorPage() {
 
           {/* Quick Access Colors - под кнопкой */}
           <div className="flex flex-col gap-2">
-            {quickAccessColors.map((color) => (
-              <div key={color.hex} className="relative group">
+            {quickAccessColors.map((color) => {
+              const ckey = color.id ?? color.hex
+              const selKey = selectedColor?.id ?? selectedColor?.hex
+              return (
+              <div key={ckey} className="relative group">
                 <button
                   type="button"
                   onClick={() => setSelectedColor(color)}
                   className={`flex w-full items-center gap-2 rounded-lg border-2 p-2 ${
-                    selectedColor?.hex === color.hex ? 'border-gray-800' : 'border-gray-200'
+                    selKey === ckey ? 'border-gray-800' : 'border-gray-200'
                   }`}
                 >
-                  <div
-                    className="h-12 w-12 flex-shrink-0 rounded-lg border border-gray-300"
-                    style={{ backgroundColor: color.hex }}
-                  />
+                  {color.swatchUrl ? (
+                    <img
+                      src={color.swatchUrl}
+                      alt=""
+                      className="h-12 w-12 flex-shrink-0 rounded-lg border border-gray-300 object-cover"
+                    />
+                  ) : (
+                    <div
+                      className="h-12 w-12 flex-shrink-0 rounded-lg border border-gray-300"
+                      style={{ backgroundColor: color.hex }}
+                    />
+                  )}
                   <span className="text-xs font-medium text-gray-700 truncate">{color.name || color.hex}</span>
                 </button>
                 <button
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation()
-                    useMaterialStore.getState().removeQuickAccessColor(color.hex)
+                    useMaterialStore.getState().removeQuickAccessColor(ckey)
                   }}
                   className="absolute right-1 top-1 hidden h-5 w-5 items-center justify-center rounded-full bg-gray-800 text-white group-hover:flex"
                 >
@@ -232,7 +243,8 @@ export function EditorPage() {
                   </svg>
                 </button>
               </div>
-            ))}
+              )
+            })}
           </div>
         </aside>
       </div>

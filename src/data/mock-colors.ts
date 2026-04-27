@@ -1,3 +1,6 @@
+/**
+ * Локальные пресеты — fallback, если GET /api/colors пустой или недоступен.
+ */
 import type { Color } from '@/types/material'
 
 export type MockColorCategory = 'wood' | 'metal' | 'wallpaper' | 'paint'

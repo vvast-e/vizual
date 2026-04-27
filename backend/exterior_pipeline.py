@@ -3,6 +3,7 @@ Exterior detection pipeline.
 Calls local model_service (GroundingDINO + SAM) via HTTP,
 postprocesses masks, returns wall/holes/wall_minus_holes.
 """
+import asyncio
 import base64
 import io
 import hashlib
@@ -21,7 +22,7 @@ from vp_detection import extract_manhattan_vps, project_to_horizon, project_vert
 GDINO_URL = os.getenv("EXTERIOR_GDINO_URL", "http://127.0.0.1:8001/gdino")
 SAM_URL = os.getenv("EXTERIOR_SAM_URL", "http://127.0.0.1:8001/sam")
 SAM_BATCH_URL = os.getenv("EXTERIOR_SAM_BATCH_URL", "http://127.0.0.1:8001/sam_batch")
-TIMEOUT_S = int(os.getenv("EXTERIOR_TIMEOUT_MS", "30000")) / 1000.0
+TIMEOUT_S = int(os.getenv("EXTERIOR_TIMEOUT_MS", "120000")) / 1000.0
 SCORE_THRESH_BUILDING = float(os.getenv("EXTERIOR_SCORE_THRESH_BUILDING", "0.3"))
 SCORE_THRESH_OPENINGS = float(os.getenv("EXTERIOR_SCORE_THRESH_OPENINGS", "0.22"))
 EXTERIOR_SAM_BATCH_ENABLE = os.getenv("EXTERIOR_SAM_BATCH_ENABLE", "1") in {"1", "true", "TRUE", "yes", "YES"}
@@ -66,6 +67,46 @@ BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.abspath(os.path.join(BACKEND_DIR, ".."))
 EXTERIOR_DEBUG_DIR = os.path.join(PROJECT_ROOT, "exterior-debug")
 
+# ---------------------------------------------------------------------------
+# Retry helper: model_service (port 8001) may still be loading models at
+# container startup.  Without retry the very first request gets
+# "All connection attempts failed" (httpx.ConnectError) and returns 500.
+# We retry up to MODEL_SERVICE_RETRY_ATTEMPTS times with exponential backoff.
+# ---------------------------------------------------------------------------
+MODEL_SERVICE_RETRY_ATTEMPTS = int(os.getenv("MODEL_SERVICE_RETRY_ATTEMPTS", "10"))
+MODEL_SERVICE_RETRY_DELAY_S = float(os.getenv("MODEL_SERVICE_RETRY_DELAY_S", "3.0"))
+
+
+async def _post_with_retry(url: str, **kwargs) -> httpx.Response:
+    """httpx.AsyncClient.post with retry on ConnectError.
+
+    Retries up to MODEL_SERVICE_RETRY_ATTEMPTS times when the target
+    service is not yet ready (ConnectError / ConnectTimeout).  All other
+    errors are raised immediately.
+    """
+    last_exc: Exception | None = None
+    for attempt in range(1, MODEL_SERVICE_RETRY_ATTEMPTS + 1):
+        try:
+            async with httpx.AsyncClient(timeout=TIMEOUT_S) as client:
+                resp = await client.post(url, **kwargs)
+            return resp
+        except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+            last_exc = exc
+            if attempt < MODEL_SERVICE_RETRY_ATTEMPTS:
+                delay = MODEL_SERVICE_RETRY_DELAY_S * (1.5 ** (attempt - 1))
+                print(
+                    f"[exterior_pipeline] model_service not ready at {url}, "
+                    f"retry {attempt}/{MODEL_SERVICE_RETRY_ATTEMPTS} in {delay:.1f}s …"
+                )
+                await asyncio.sleep(delay)
+            else:
+                print(
+                    f"[exterior_pipeline] model_service at {url} unreachable "
+                    f"after {MODEL_SERVICE_RETRY_ATTEMPTS} attempts"
+                )
+    raise last_exc  # type: ignore[misc]
+
+
 def _bbox_area(b: list[float]) -> float:
     return max(0.0, b[2] - b[0]) * max(0.0, b[3] - b[1])
 
@@ -85,15 +126,14 @@ def _bbox_inside(inner: list[float], outer: list[float], threshold: float = 0.6)
 
 async def detect_building_bbox(image_bytes: bytes) -> list[float] | None:
     """Call GroundingDINO to find the union of all wall/facade bboxes."""
-    async with httpx.AsyncClient(timeout=TIMEOUT_S) as client:
-        resp = await client.post(
-            GDINO_URL,
-            files={"image": ("photo.jpg", image_bytes, "image/jpeg")},
-            data={
-                "prompt": "wall . external wall . facade",
-                "score_threshold": str(SCORE_THRESH_BUILDING),
-            },
-        )
+    resp = await _post_with_retry(
+        GDINO_URL,
+        files={"image": ("photo.jpg", image_bytes, "image/jpeg")},
+        data={
+            "prompt": "wall . external wall . facade",
+            "score_threshold": str(SCORE_THRESH_BUILDING),
+        },
+    )
     resp.raise_for_status()
     data = resp.json()
     bboxes = data.get("bboxes", [])
@@ -114,15 +154,14 @@ async def detect_openings_bboxes(
     building_bbox: list[float],
 ) -> dict[str, list[list[float]]]:
     """Call GroundingDINO to find windows/doors inside building_bbox."""
-    async with httpx.AsyncClient(timeout=TIMEOUT_S) as client:
-        resp = await client.post(
-            GDINO_URL,
-            files={"image": ("photo.jpg", image_bytes, "image/jpeg")},
-            data={
-                "prompt": "window . door",
-                "score_threshold": str(SCORE_THRESH_OPENINGS),
-            },
-        )
+    resp = await _post_with_retry(
+        GDINO_URL,
+        files={"image": ("photo.jpg", image_bytes, "image/jpeg")},
+        data={
+            "prompt": "window . door",
+            "score_threshold": str(SCORE_THRESH_OPENINGS),
+        },
+    )
     resp.raise_for_status()
     data = resp.json()
 
@@ -146,12 +185,11 @@ async def sam_mask_from_bbox(image_bytes: bytes, bbox: list[float]) -> np.ndarra
     """Call SAM to get a binary mask (H,W uint8 0/255) for a given bbox."""
     import json
 
-    async with httpx.AsyncClient(timeout=TIMEOUT_S) as client:
-        resp = await client.post(
-            SAM_URL,
-            files={"image": ("photo.jpg", image_bytes, "image/jpeg")},
-            data={"bbox": json.dumps(bbox)},
-        )
+    resp = await _post_with_retry(
+        SAM_URL,
+        files={"image": ("photo.jpg", image_bytes, "image/jpeg")},
+        data={"bbox": json.dumps(bbox)},
+    )
     resp.raise_for_status()
     arr = np.frombuffer(resp.content, dtype=np.uint8)
     mask = cv2.imdecode(arr, cv2.IMREAD_GRAYSCALE)
@@ -164,12 +202,11 @@ async def sam_masks_from_bboxes_batch(image_bytes: bytes, bboxes: list[list[floa
     """Call SAM batch endpoint and return masks in bbox order."""
     if not bboxes:
         return []
-    async with httpx.AsyncClient(timeout=TIMEOUT_S) as client:
-        resp = await client.post(
-            SAM_BATCH_URL,
-            files={"image": ("photo.jpg", image_bytes, "image/jpeg")},
-            data={"bboxes": json.dumps(bboxes), "multimask_output": "false"},
-        )
+    resp = await _post_with_retry(
+        SAM_BATCH_URL,
+        files={"image": ("photo.jpg", image_bytes, "image/jpeg")},
+        data={"bboxes": json.dumps(bboxes), "multimask_output": "false"},
+    )
     resp.raise_for_status()
     data = resp.json()
     masks_b64 = data.get("masks", [])

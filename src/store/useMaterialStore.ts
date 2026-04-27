@@ -16,7 +16,7 @@ interface MaterialState {
   addQuickAccessMaterial: (material: Material) => void
   removeQuickAccessMaterial: (materialId: string) => void
   addQuickAccessColor: (color: Color) => void
-  removeQuickAccessColor: (hex: string) => void
+  removeQuickAccessColor: (key: string) => void
 }
 
 export const useMaterialStore = create<MaterialState>((set) => ({
@@ -44,13 +44,15 @@ export const useMaterialStore = create<MaterialState>((set) => ({
     }),
   addQuickAccessColor: (color) =>
     set((state) => {
-      if (state.quickAccessColors.find((c) => c.hex === color.hex)) return state
+      const key = color.id ?? color.hex
+      if (state.quickAccessColors.find((c) => (c.id ?? c.hex) === key)) return state
       return { quickAccessColors: [...state.quickAccessColors, color] }
     }),
-  removeQuickAccessColor: (hex) =>
+  removeQuickAccessColor: (key: string) =>
     set((state) => {
-      const newColors = state.quickAccessColors.filter((c) => c.hex !== hex)
-      const wasSelected = state.selectedColor?.hex === hex
+      const newColors = state.quickAccessColors.filter((c) => (c.id ?? c.hex) !== key)
+      const sel = state.selectedColor
+      const wasSelected = (sel?.id ?? sel?.hex) === key
       return {
         quickAccessColors: newColors,
         ...(wasSelected ? { selectedColor: null } : {}),
