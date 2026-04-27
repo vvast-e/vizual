@@ -335,12 +335,36 @@ export function materialDtoToMaterial(dto: MaterialDTO): Material {
   }
 }
 
-/** DTO → визуализатор Color (оттенок для HSV — условный, если только swatch) */
-export function colorDtoToColor(dto: ColorDTO): Color {
+export async function extractHexFromImage(url: string): Promise<string> {
+  return new Promise((resolve) => {
+    const img = new Image()
+    img.crossOrigin = 'anonymous'
+    img.onload = () => {
+      const canvas = document.createElement('canvas')
+      canvas.width = 1
+      canvas.height = 1
+      const ctx = canvas.getContext('2d')
+      if (!ctx) {
+        resolve('#9d8b70')
+        return
+      }
+      ctx.drawImage(img, 0, 0, 1, 1)
+      const data = ctx.getImageData(0, 0, 1, 1).data
+      const hex = '#' + [data[0], data[1], data[2]].map((x) => x.toString(16).padStart(2, '0')).join('')
+      resolve(hex)
+    }
+    img.onerror = () => resolve('#9d8b70')
+    img.src = url
+  })
+}
+
+/** DTO → визуализатор Color (оттенок для HSV вычисляется из превью) */
+export async function colorDtoToColor(dto: ColorDTO): Promise<Color> {
+  const hex = dto.url ? await extractHexFromImage(dto.url) : '#9d8b70'
   return {
-    id: dto.id,
+    id: String(dto.id),
     name: dto.name,
-    hex: '#9d8b70',
+    hex,
     swatchUrl: dto.url,
   }
 }

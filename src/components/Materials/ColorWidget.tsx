@@ -28,9 +28,11 @@ export function ColorWidget({ open, onClose }: ColorWidgetProps) {
       scene_category: sceneMode,
       page_size: 100,
     })
-      .then((list) => {
+      .then(async (list) => {
         if (cancelled) return
-        setColors(list.map(colorDtoToColor))
+        const coloredList = await Promise.all(list.map(colorDtoToColor))
+        if (cancelled) return
+        setColors(coloredList)
         setLoading(false)
       })
       .catch(() => {
