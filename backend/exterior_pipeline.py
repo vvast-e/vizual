@@ -2566,13 +2566,11 @@ def _extract_wall_from_component(component_mask: np.ndarray) -> dict | None:
                 {"corners": corners_up, "polygon": poly_up},
             ]
 
-    M = cv2.moments(contour)
-    if M["m00"] > 0:
-        cx = M["m10"] / M["m00"]
-        cy = M["m01"] / M["m00"]
-    else:
-        cx = float(np.mean([c[0] for c in corners]))
-        cy = float(np.mean([c[1] for c in corners]))
+    # Use Distance Transform to find the point deepest inside the mask (Pole of Inaccessibility).
+    # This guarantees the center is visually pleasing and never falls inside a hole.
+    dist = cv2.distanceTransform(component_mask, cv2.DIST_L2, 5)
+    _, _, _, max_loc = cv2.minMaxLoc(dist)
+    cx, cy = float(max_loc[0]), float(max_loc[1])
 
     out: dict = {
         "corners": corners,

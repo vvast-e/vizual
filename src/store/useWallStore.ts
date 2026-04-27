@@ -29,13 +29,15 @@ interface WallState {
   isDetecting: boolean
   /** Назначенная текстура (URL) для каждой стены */
   wallTextures: Record<number, string | null>
+  /** Сырая исходная текстура (URL) до применения цвета */
+  wallRawTextures: Record<number, string | null>
   /** Base64 PNG маски фасада (wall_minus_holes) для ручного split */
   exteriorMaskBase64: string | null
   setWalls: (walls: WallData[], imageSize: WallImageSize | null, resetTextures?: boolean) => void
   setExteriorMaskBase64: (mask: string | null) => void
   selectWall: (id: number | null) => void
   setDetecting: (v: boolean) => void
-  setWallTexture: (wallId: number, textureUrl: string | null) => void
+  setWallTexture: (wallId: number, textureUrl: string | null, rawUrl?: string | null) => void
   updateWallCorners: (wallId: number, corners: [number, number][]) => void
   /** Обновить одну вершину polygon по индексу (для экстерьера). */
   updateWallPolygonVertex: (wallId: number, vertexIndex: number, point: [number, number]) => void
@@ -51,6 +53,7 @@ export const useWallStore = create<WallState>((set) => ({
   selectedWallId: null,
   isDetecting: false,
   wallTextures: {},
+  wallRawTextures: {},
   exteriorMaskBase64: null,
   setWalls: (walls, wallImageSize, resetTextures = true) =>
     set((s) => ({
@@ -62,13 +65,21 @@ export const useWallStore = create<WallState>((set) => ({
         : Object.fromEntries(
             Object.entries(s.wallTextures).filter(([id]) => walls.some((w) => w.id === Number(id)))
           ),
+      wallRawTextures: resetTextures
+        ? {}
+        : Object.fromEntries(
+            Object.entries(s.wallRawTextures).filter(([id]) => walls.some((w) => w.id === Number(id)))
+          ),
       exteriorMaskBase64: wallImageSize == null ? null : s.exteriorMaskBase64,
     })),
   setExteriorMaskBase64: (exteriorMaskBase64) => set({ exteriorMaskBase64 }),
   selectWall: (id) => set({ selectedWallId: id }),
   setDetecting: (isDetecting) => set({ isDetecting }),
-  setWallTexture: (wallId, textureUrl) =>
-    set((s) => ({ wallTextures: { ...s.wallTextures, [wallId]: textureUrl } })),
+  setWallTexture: (wallId, textureUrl, rawUrl) =>
+    set((s) => ({
+      wallTextures: { ...s.wallTextures, [wallId]: textureUrl },
+      wallRawTextures: rawUrl !== undefined ? { ...s.wallRawTextures, [wallId]: rawUrl } : s.wallRawTextures,
+    })),
   updateWallCorners: (wallId, corners) =>
     set((s) => ({
       walls: s.walls.map((w) => {
@@ -107,10 +118,13 @@ export const useWallStore = create<WallState>((set) => ({
   removeWall: (wallId) =>
     set((s) => {
       const newTextures = { ...s.wallTextures }
+      const newRawTextures = { ...s.wallRawTextures }
       delete newTextures[wallId]
+      delete newRawTextures[wallId]
       return {
         walls: s.walls.filter((w) => w.id !== wallId),
         wallTextures: newTextures,
+        wallRawTextures: newRawTextures,
         selectedWallId: s.selectedWallId === wallId ? null : s.selectedWallId,
       }
     }),

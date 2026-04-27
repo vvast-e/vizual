@@ -257,12 +257,7 @@ export function Canvas2D({
   }, [wallTextures, isReady, clearTextureFromWall, walls])
 
   const handleApplyTexture = useCallback(async () => {
-    const rawUrl = selectedMaterial?.texture.url
-    if (!rawUrl) {
-      return
-    }
     try {
-      const url = await getTextureUrl(rawUrl)
       if (sceneMode === 'exterior' && walls.length > 0 && wallImageSize) {
         if (facadeMergeActive) {
           const profiledIds = walls
@@ -275,7 +270,10 @@ export function Canvas2D({
           for (const id of profiledIds) {
             const wall = walls.find((w) => w.id === id)
             if (!wall || wall.corners.length < 3) continue
-            setWallTexture(id, url)
+            const rawUrl = selectedMaterial?.texture.url || useWallStore.getState().wallRawTextures[id]
+            if (!rawUrl) continue
+            const url = await getTextureUrl(rawUrl)
+            setWallTexture(id, url, rawUrl)
             try {
               await applyTextureToWall(url, wall.corners, wallImageSize, id)
             } catch (e) {
@@ -289,7 +287,10 @@ export function Canvas2D({
         if (fallbackId != null) {
           const wall = walls.find((w) => w.id === fallbackId)
           if (wall && wall.corners.length >= 3) {
-            setWallTexture(fallbackId, url)
+            const rawUrl = selectedMaterial?.texture.url || useWallStore.getState().wallRawTextures[fallbackId]
+            if (!rawUrl) return
+            const url = await getTextureUrl(rawUrl)
+            setWallTexture(fallbackId, url, rawUrl)
             try {
               await applyTextureToWall(url, wall.corners, wallImageSize, fallbackId)
             } catch (e) {
@@ -300,9 +301,13 @@ export function Canvas2D({
           }
         }
       }
-      await applyTexture(url, 'repeat')
+      const rawUrl = selectedMaterial?.texture.url
+      if (rawUrl) {
+        const url = await getTextureUrl(rawUrl)
+        await applyTexture(url, 'repeat')
+      }
     } catch (err) {
-      console.error('Не удалось наложить текстуру:', rawUrl, err)
+      console.error('Не удалось наложить текстуру:', err)
     }
   }, [
     selectedMaterial?.texture.url,
@@ -344,9 +349,9 @@ export function Canvas2D({
             <button
               type="button"
               onClick={handleApplyTexture}
-              disabled={!selectedMaterial}
+              disabled={!selectedMaterial && !selectedColor}
               className={`tour-apply-texture ${actionBtnBaseClass} min-w-[180px] border-gray-900 bg-gray-900 text-white hover:bg-black`}
-              title="Наложить выбранный профиль на текущую область фасада"
+              title="Наложить выбранный профиль или цвет на текущую область фасада"
             >
               <LayersIcon />
               Применить профиль

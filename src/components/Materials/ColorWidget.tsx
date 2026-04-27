@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useColorize } from '@/hooks/useColorize'
-import { MOCK_COLORS, COLOR_CATEGORIES, type MockColorCategory } from '@/data/mock-colors'
 import { useMaterialStore } from '@/store/useMaterialStore'
 import { useUIStore } from '@/store/useUIStore'
 import { colorDtoToColor, fetchColors } from '@/lib/materials-api'
@@ -11,24 +10,19 @@ interface ColorWidgetProps {
   onClose: () => void
 }
 
-type PaletteState =
-  | { kind: 'loading' }
-  | { kind: 'api'; colors: Color[] }
-  | { kind: 'mock' }
-
 export function ColorWidget({ open, onClose }: ColorWidgetProps) {
   const sceneMode = useUIStore((s) => s.sceneMode)
   const [search, setSearch] = useState('')
-  const [category, setCategory] = useState<MockColorCategory | 'all'>('all')
-  const [palette, setPalette] = useState<PaletteState>({ kind: 'loading' })
+  const [loading, setLoading] = useState(false)
+  const [colors, setColors] = useState<Color[]>([])
+  
   const { setSelectedColor } = useColorize()
-  const setSelectedMaterial = useMaterialStore((s) => s.setSelectedMaterial)
   const addQuickAccessColor = useMaterialStore((s) => s.addQuickAccessColor)
 
   useEffect(() => {
     if (!open) return
     let cancelled = false
-    setPalette({ kind: 'loading' })
+    setLoading(true)
     fetchColors({
       visible_only: true,
       scene_category: sceneMode,
@@ -36,41 +30,25 @@ export function ColorWidget({ open, onClose }: ColorWidgetProps) {
     })
       .then((list) => {
         if (cancelled) return
-        if (list.length > 0) {
-          setPalette({ kind: 'api', colors: list.map(colorDtoToColor) })
-        } else {
-          setPalette({ kind: 'mock' })
-        }
+        setColors(list.map(colorDtoToColor))
+        setLoading(false)
       })
       .catch(() => {
-        if (!cancelled) setPalette({ kind: 'mock' })
+        if (!cancelled) setLoading(false)
       })
     return () => {
       cancelled = true
     }
   }, [open, sceneMode])
 
-  const colors: Color[] = useMemo(() => {
-    if (palette.kind === 'api') return palette.colors
-    if (palette.kind === 'mock') return MOCK_COLORS
-    return []
-  }, [palette])
-
-  const showCategoryFilter = palette.kind === 'mock'
-
   const filtered = useMemo(() => {
     return colors.filter((c) => {
-      const matchSearch = !search || c.name?.toLowerCase().includes(search.toLowerCase())
-      if (!showCategoryFilter) return matchSearch
-      const cat = (c as { category?: MockColorCategory }).category
-      const matchCategory = category === 'all' || cat === category
-      return matchSearch && matchCategory
+      return !search || c.name?.toLowerCase().includes(search.toLowerCase())
     })
-  }, [colors, search, category, showCategoryFilter])
+  }, [colors, search])
 
   const handleSelect = (color: Color) => {
     setSelectedColor(color)
-    setSelectedMaterial(null)
     addQuickAccessColor(color)
     onClose()
   }
@@ -116,27 +94,8 @@ export function ColorWidget({ open, onClose }: ColorWidgetProps) {
           </div>
         </div>
 
-        {showCategoryFilter && (
-          <div className="flex gap-2 px-5 pb-3">
-            {COLOR_CATEGORIES.map((cat) => (
-              <button
-                key={cat.value}
-                type="button"
-                onClick={() => setCategory(cat.value)}
-                className={`rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
-                  category === cat.value
-                    ? 'bg-gray-900 text-white'
-                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                }`}
-              >
-                {cat.label}
-              </button>
-            ))}
-          </div>
-        )}
-
         <div className="max-h-[50vh] overflow-y-auto px-5 pb-5">
-          {palette.kind === 'loading' ? (
+          {loading ? (
             <p className="py-8 text-center text-gray-500">Загрузка каталога…</p>
           ) : filtered.length === 0 ? (
             <p className="py-8 text-center text-gray-500">Цвета не найдены</p>

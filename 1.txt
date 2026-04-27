@@ -1,0 +1,5 @@
+$ ssh -o StrictHostKeyChecking=no root@159.194.204.50 "cd /opt/vizual && docker-compose logs --tail=100 backend
+
+$ ssh -o StrictHostKeyChecking=no root@159.194.204.50 "cd /opt/vizual && git pull origin build_segmentation && docker-compose restart frontend" && sleep 3 && ssh -o StrictHostKeyChecking=no root@159.194.204.50 "cd /opt/vizual && docker-compose ps"
+
+вот такие команды использовал ИИ opencode чтобы подключаться к серверу, где лежит прод. используй их

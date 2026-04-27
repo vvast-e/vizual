@@ -17,7 +17,6 @@ export function MaterialWidget({ open, onClose }: MaterialWidgetProps) {
   const [category, setCategory] = useState<string>('all')
   const [apiMaterials, setApiMaterials] = useState<Material[] | null>(null)
   const setSelectedMaterial = useMaterialStore((s) => s.setSelectedMaterial)
-  const setSelectedColor = useMaterialStore((s) => s.setSelectedColor)
   const addQuickAccessMaterial = useMaterialStore((s) => s.addQuickAccessMaterial)
 
   useEffect(() => {
@@ -66,7 +65,6 @@ export function MaterialWidget({ open, onClose }: MaterialWidgetProps) {
 
   const handleSelect = (material: Material) => {
     setSelectedMaterial(material)
-    setSelectedColor(null)
     addQuickAccessMaterial(material)
     onClose()
   }

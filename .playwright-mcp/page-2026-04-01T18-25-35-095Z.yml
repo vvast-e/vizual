@@ -1,0 +1,16 @@
+- generic [ref=e3]:
+  - heading "Vizual" [level=1] [ref=e4]
+  - paragraph [ref=e5]: Визуализация отделочных материалов
+  - generic [ref=e6]:
+    - button "Интерьер" [ref=e7] [cursor=pointer]:
+      - img [ref=e8]
+      - text: Интерьер
+    - button "Экстерьер" [ref=e11] [cursor=pointer]:
+      - img [ref=e12]
+      - text: Экстерьер
+  - button "Загрузить фото" [ref=e16] [cursor=pointer]:
+    - img [ref=e17]
+    - generic [ref=e20]:
+      - paragraph [ref=e21]: Перетащите фото сюда
+      - paragraph [ref=e22]: или нажмите для выбора
+    - paragraph [ref=e23]: JPEG, PNG, WebP до 10 МБ
