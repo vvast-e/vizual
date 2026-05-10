@@ -114,11 +114,11 @@ export function ColorWidget({ open, onClose }: ColorWidgetProps) {
                     <img
                       src={color.swatchUrl}
                       alt=""
-                      className="h-12 w-12 rounded-lg border border-gray-300 object-cover shadow-sm"
+                      className="h-16 w-16 rounded-lg border border-gray-300 object-cover shadow-sm"
                     />
                   ) : (
                     <div
-                      className="h-12 w-12 rounded-lg border border-gray-300 shadow-sm"
+                      className="h-16 w-16 rounded-lg border border-gray-300 shadow-sm"
                       style={{ backgroundColor: color.hex }}
                     />
                   )}

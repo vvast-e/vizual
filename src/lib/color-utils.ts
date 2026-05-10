@@ -1,8 +1,13 @@
 /**
- * HSV-утилиты для перекраски текстур с сохранением фактуры.
+ * Утилиты для перекраски текстур с сохранением фактуры.
  *
- * Алгоритм: заменяем H на целевой, сдвигаем S к целевому (blend),
- * V оставляем оригинальным — так сохраняются тени и рисунок текстуры.
+ * Алгоритм: HSL Color Transfer — переносим тон и насыщенность краски,
+ * а яркость текстуры центрируем вокруг яркости краски, сохраняя рисунок
+ * (сучки, волокна, трещины) как отклонения от средней яркости.
+ *
+ * Имитирует реальную физику морилки/масла:
+ * - тёмные краски (больше пигмента) → слабее видна текстура
+ * - светлые краски (тонкий слой) → текстура просвечивает сильнее
  */
 
 /** RGB → HSV. r,g,b ∈ [0,255], возвращает h ∈ [0,360), s,v ∈ [0,1] */
@@ -43,6 +48,56 @@ export function hsvToRgb(h: number, s: number, v: number): [number, number, numb
   ]
 }
 
+/** RGB → HSL. r,g,b ∈ [0,255], возвращает h ∈ [0,360), s,l ∈ [0,1] */
+export function rgbToHsl(r: number, g: number, b: number): [number, number, number] {
+  const rf = r / 255
+  const gf = g / 255
+  const bf = b / 255
+  const max = Math.max(rf, gf, bf)
+  const min = Math.min(rf, gf, bf)
+  const l = (max + min) / 2
+
+  if (max === min) return [0, 0, l]
+
+  const d = max - min
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min)
+
+  let h = 0
+  if (max === rf) h = (gf - bf) / d + (gf < bf ? 6 : 0)
+  else if (max === gf) h = (bf - rf) / d + 2
+  else h = (rf - gf) / d + 4
+  h *= 60
+
+  return [h, s, l]
+}
+
+/** HSL → RGB. h ∈ [0,360), s,l ∈ [0,1], возвращает [r,g,b] ∈ [0,255] */
+export function hslToRgb(h: number, s: number, l: number): [number, number, number] {
+  if (s === 0) {
+    const v = Math.round(l * 255)
+    return [v, v, v]
+  }
+
+  const hueToChannel = (p: number, q: number, t: number): number => {
+    if (t < 0) t += 1
+    if (t > 1) t -= 1
+    if (t < 1 / 6) return p + (q - p) * 6 * t
+    if (t < 1 / 2) return q
+    if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6
+    return p
+  }
+
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s
+  const p = 2 * l - q
+  const hNorm = h / 360
+
+  return [
+    Math.round(hueToChannel(p, q, hNorm + 1 / 3) * 255),
+    Math.round(hueToChannel(p, q, hNorm) * 255),
+    Math.round(hueToChannel(p, q, hNorm - 1 / 3) * 255),
+  ]
+}
+
 /** Парсинг hex-цвета (#rrggbb) → [r, g, b] */
 export function hexToRgb(hex: string): [number, number, number] {
   const h = hex.replace('#', '')
@@ -54,13 +109,21 @@ export function hexToRgb(hex: string): [number, number, number] {
 }
 
 /**
- * Применяет HSV-сдвиг цвета к ImageData текстуры.
- * - H заменяется на целевой
- * - S смешивается (lerp) с целевой насыщенностью по intensity
- * - V остаётся оригинальным (сохраняет фактуру, тени, рисунок)
+ * Перекраска текстуры методом HSL Color Transfer.
+ *
+ * Имитирует нанесение морилки/масла на дерево:
+ * 1. Вычисляем среднюю яркость текстуры (один раз)
+ * 2. Для каждого пикселя находим «деталь» = отклонение от средней яркости
+ *    (сучки, волокна, трещины — это всё отклонения)
+ * 3. Новая яркость = яркость краски + деталь × preserveFactor
+ * 4. Тон и насыщенность берём от краски
+ *
+ * preserveFactor адаптивный:
+ * - тёмные краски (много пигмента) → preserveFactor ≈ 0.30 (текстура слабо видна)
+ * - светлые краски (тонкий слой) → preserveFactor ≈ 0.61 (текстура хорошо видна)
  *
  * @param source — изображение или canvas с текстурой
- * @param targetHex — целевой цвет (#rrggbb)
+ * @param targetHex — целевой цвет покраски (#rrggbb)
  * @param intensity — интенсивность перекраски 0..1
  * @returns canvas с перекрашенной текстурой
  */
@@ -81,43 +144,56 @@ export function applyHsvColorShift(
   const imageData = ctx.getImageData(0, 0, w, h)
   const data = imageData.data
 
-  const [tr, tg, tb] = hexToRgb(targetHex)
-  const [tH, tS, tV] = rgbToHsv(tr, tg, tb)
+  const [pr, pg, pb] = hexToRgb(targetHex)
+  const [paintH, paintS, paintL] = rgbToHsl(pr, pg, pb)
   const t = Math.max(0, Math.min(1, intensity))
 
-  // Если intensity=0, ничего не делаем.
   if (t < 0.001) return canvas
 
-  // Безопасная граница для режима Hard Light, чтобы чистый белый или чёрный
-  // цвет не делал текстуру полностью плоской (не убивал весь контраст).
-  const safeTv = Math.max(0.1, Math.min(0.9, tV))
-
+  // ─── Проход 1: средняя яркость текстуры ───
+  // Используем быструю формулу HSL-lightness: (max + min) / 2 / 255
+  let sumL = 0
+  let count = 0
   for (let i = 0; i < data.length; i += 4) {
-    const r = data[i]
-    const g = data[i + 1]
-    const b = data[i + 2]
-    // alpha не трогаем
+    if (data[i + 3] < 10) continue // пропускаем прозрачные
+    const pixMax = Math.max(data[i], data[i + 1], data[i + 2])
+    const pixMin = Math.min(data[i], data[i + 1], data[i + 2])
+    sumL += (pixMax + pixMin) / 510
+    count++
+  }
+  const meanTexL = count > 0 ? sumL / count : 0.5
 
-    const [, oS, oV] = rgbToHsv(r, g, b)
+  // ─── Адаптивный коэффициент сохранения текстуры ───
+  // Физика: тёмная морилка = много пигмента → текстура менее заметна
+  //         светлая побелка = тонкий слой → текстура просвечивает
+  const basePF = 0.65
+  const preserveFactor = basePF * (0.4 + 0.6 * paintL)
 
-    // Новый H = целевой H
-    const newH = tH
-    // Новый S = lerp(originalS, targetS, intensity)
-    const newS = oS + (tS - oS) * t
-    
-    // Сдвиг яркости (V) через режим Hard Light
-    let blendV = oV
-    if (safeTv < 0.5) {
-      blendV = 2.0 * oV * safeTv
-    } else {
-      blendV = 1.0 - 2.0 * (1.0 - oV) * (1.0 - safeTv)
-    }
-    const newV = oV + (blendV - oV) * t
+  // ─── Проход 2: перекраска ───
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i + 3] < 10) continue
 
-    const [nr, ng, nb] = hsvToRgb(newH, newS, newV)
-    data[i] = nr
-    data[i + 1] = ng
-    data[i + 2] = nb
+    const r = data[i], g = data[i + 1], b = data[i + 2]
+
+    // Яркость текущего пикселя (HSL lightness, быстрая формула)
+    const pixMax = Math.max(r, g, b)
+    const pixMin = Math.min(r, g, b)
+    const texL = (pixMax + pixMin) / 510
+
+    // Деталь текстуры = отклонение от средней яркости
+    // сучок (тёмный) → detail < 0, светлая полоса → detail > 0
+    const detail = texL - meanTexL
+
+    // Новая яркость: центрируем рисунок вокруг яркости краски
+    const newL = Math.max(0, Math.min(1, paintL + detail * preserveFactor))
+
+    // Тон + насыщенность от краски, яркость с деталями текстуры
+    const [nr, ng, nb] = hslToRgb(paintH, paintS, newL)
+
+    // Смешиваем с оригиналом по intensity
+    data[i]     = Math.round(r + (nr - r) * t)
+    data[i + 1] = Math.round(g + (ng - g) * t)
+    data[i + 2] = Math.round(b + (nb - b) * t)
   }
 
   ctx.putImageData(imageData, 0, 0)

@@ -341,16 +341,27 @@ export async function extractHexFromImage(url: string): Promise<string> {
     img.crossOrigin = 'anonymous'
     img.onload = () => {
       const canvas = document.createElement('canvas')
-      canvas.width = 1
-      canvas.height = 1
+      canvas.width = 5
+      canvas.height = 5
       const ctx = canvas.getContext('2d')
       if (!ctx) {
         resolve('#9d8b70')
         return
       }
-      ctx.drawImage(img, 0, 0, 1, 1)
-      const data = ctx.getImageData(0, 0, 1, 1).data
-      const hex = '#' + [data[0], data[1], data[2]].map((x) => x.toString(16).padStart(2, '0')).join('')
+      ctx.drawImage(img, 0, 0, 5, 5)
+      const data = ctx.getImageData(0, 0, 5, 5).data
+      let r = 0, g = 0, b = 0
+      for (let i = 0; i < data.length; i += 4) {
+        r += data[i]
+        g += data[i + 1]
+        b += data[i + 2]
+      }
+      const count = data.length / 4
+      const hex =
+        '#' +
+        [Math.round(r / count), Math.round(g / count), Math.round(b / count)]
+          .map((x) => x.toString(16).padStart(2, '0'))
+          .join('')
       resolve(hex)
     }
     img.onerror = () => resolve('#9d8b70')
