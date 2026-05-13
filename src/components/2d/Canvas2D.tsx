@@ -6,6 +6,7 @@ import { useUIStore } from '@/store/useUIStore'
 import { useWallStore } from '@/store/useWallStore'
 import { useColorize } from '@/hooks/useColorize'
 import { useHistoryStore } from '@/store/useHistoryStore'
+import { toast } from 'sonner'
 
 function LayersIcon() {
   return (
@@ -155,6 +156,8 @@ export function Canvas2D({
     hasTextureLayer,
     isPhotoLoaded,
     canvasInstanceRef,
+    beforeAfter,
+    setBeforeAfter,
   } = useCanvas2D({
     canvasRef,
     containerWidth: canvasSize.width,
@@ -162,6 +165,28 @@ export function Canvas2D({
     customMaskMode,
     onCustomMaskComplete,
   })
+
+  // Space = показать оригинал (до/после)
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.target as HTMLElement)?.tagName === 'INPUT' || (e.target as HTMLElement)?.tagName === 'TEXTAREA') return
+      if (e.key === ' ' && !e.repeat) {
+        e.preventDefault()
+        if (hasTextureLayer) setBeforeAfter(true)
+      }
+    }
+    const releaseHandler = (e: KeyboardEvent) => {
+      if (e.key === ' ') {
+        setBeforeAfter(false)
+      }
+    }
+    window.addEventListener('keydown', handler)
+    window.addEventListener('keyup', releaseHandler)
+    return () => {
+      window.removeEventListener('keydown', handler)
+      window.removeEventListener('keyup', releaseHandler)
+    }
+  }, [hasTextureLayer, setBeforeAfter])
 
   useEffect(() => {
     if (photoDataUrl && isReady) {
@@ -264,7 +289,7 @@ export function Canvas2D({
             .map((w) => w.id)
             .filter((id) => wallTextures[id] != null)
           if (profiledIds.length === 0) {
-            console.warn('Режим объединения фасада активен, но нет областей с уже наложенным профилем')
+            toast.warning('Нет областей с наложенным профилем')
             return
           }
           for (const id of profiledIds) {
@@ -281,6 +306,7 @@ export function Canvas2D({
               throw e
             }
           }
+          toast.success('Профиль применён ко всем областям')
           return
         }
         const fallbackId = selectedWallId ?? walls[0]?.id ?? null
@@ -297,6 +323,7 @@ export function Canvas2D({
               setWallTexture(fallbackId, null)
               throw e
             }
+            toast.success('Профиль применён')
             return
           }
         }
@@ -305,9 +332,11 @@ export function Canvas2D({
       if (rawUrl) {
         const url = await getTextureUrl(rawUrl)
         await applyTexture(url, 'repeat')
+        toast.success('Профиль применён')
       }
     } catch (err) {
       console.error('Не удалось наложить текстуру:', err)
+      toast.error('Не удалось наложить текстуру')
     }
   }, [
     selectedMaterial?.texture.url,
@@ -341,6 +370,24 @@ export function Canvas2D({
     return () => clearTimeout(timer)
   }, [selectedColor?.hex, colorizeOpacity, isReady, selectedMaterial, hasTextureLayer, handleApplyTexture])
 
+  // Авто-применение при смене материала (если уже есть текстура)
+  const prevMaterialIdRef = useRef<string | null>(null)
+  useEffect(() => {
+    const matId = selectedMaterial?.id ?? null
+    if (prevMaterialIdRef.current === null) {
+      prevMaterialIdRef.current = matId
+      return
+    }
+    if (prevMaterialIdRef.current === matId) return
+    prevMaterialIdRef.current = matId
+
+    if (!isReady || !selectedMaterial || !hasTextureLayer) return
+    const timer = setTimeout(() => {
+      handleApplyTexture()
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [selectedMaterial?.id, isReady, hasTextureLayer, handleApplyTexture])
+
   return (
     <div className={`flex flex-1 flex-col gap-1 overflow-hidden ${className}`}>
       {photoDataUrl && (
@@ -354,7 +401,7 @@ export function Canvas2D({
               title="Наложить выбранный профиль или цвет на текущую область фасада"
             >
               <LayersIcon />
-              Применить профиль
+              {selectedMaterial ? 'Применить профиль' : 'Применить цвет'}
             </button>
             {sceneMode === 'exterior' && (
               <button
@@ -363,7 +410,7 @@ export function Canvas2D({
                 disabled={walls.length === 0}
                 className={`${actionBtnBaseClass} min-w-[140px] ${
                   facadeMergeActive
-                    ? 'border-blue-600 bg-blue-50 text-blue-800'
+                    ? 'border-gray-700 bg-gray-100 text-gray-900'
                     : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
                 }`}
                 title="Когда включено, профиль применяется сразу ко всем областям фасада"
@@ -371,19 +418,20 @@ export function Canvas2D({
                 Объединить фасад
               </button>
             )}
+            <div className="mx-1 self-stretch w-px bg-gray-200" />
             <button
               type="button"
               onClick={() => setEditWallCorners(!editWallCorners)}
               disabled={selectedWallId == null}
               className={`tour-edit-mask ${actionBtnBaseClass} min-w-[160px] ${
                 editWallCorners
-                  ? 'border-blue-600 bg-blue-50 text-blue-800'
+                  ? 'border-gray-700 bg-gray-100 text-gray-900'
                   : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
               }`}
-              title="Включить режим правки формы выбранной области фасада"
+              title="Редактировать границы области фасада"
             >
               <PencilIcon />
-              Редактировать область
+              Редактировать
             </button>
             {sceneMode === 'exterior' && exteriorMaskBase64 && wallImageSize && (
               <button
@@ -399,53 +447,84 @@ export function Canvas2D({
                 disabled={selectedWallId == null}
                 className={`${actionBtnBaseClass} min-w-[140px] ${
                   exteriorSplitLineActive
-                    ? 'border-blue-600 bg-blue-50 text-blue-800'
+                    ? 'border-gray-700 bg-gray-100 text-gray-900'
                     : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
                 }`}
-                title="Нарисовать вертикальную линию стыка между стенами"
+                title="Рисовать линию стыка между стенами"
               >
                 <ScissorsIcon />
                 Разрезать область
               </button>
             )}
+            <div className="mx-1 self-stretch w-px bg-gray-200" />
             <button
               type="button"
               aria-pressed={hideWallMasks}
               onClick={() => setHideWallMasks(!hideWallMasks)}
-              className={`${actionBtnBaseClass} min-w-[160px] ${
+              className={`tour-hide-masks ${actionBtnBaseClass} min-w-[160px] ${
                 hideWallMasks
-                  ? 'border-blue-600 bg-blue-50 text-blue-800'
+                  ? 'border-gray-700 bg-gray-100 text-gray-900'
                   : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
               }`}
-              title="Показать/скрыть синие контуры областей фасада"
+              title="Показать или скрыть контуры областей фасада"
             >
               {hideWallMasks ? <EyeOffIcon /> : <EyeIcon />}
               {hideWallMasks ? 'Показать области' : 'Скрыть области'}
             </button>
+            <div className="mx-1 self-stretch w-px bg-gray-200" />
             <button
               type="button"
-              onClick={() => undo()}
-              disabled={!canUndo()}
-              className={`${actionBtnBaseClass} min-w-[100px] border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-40`}
-              title="Отменить последнее изменение области (Ctrl+Z)"
+              onClick={() => {
+                if (hasTextureLayer) setBeforeAfter(true)
+              }}
+              onMouseDown={(e) => {
+                if (e.button !== 0) return
+                if (hasTextureLayer) setBeforeAfter(true)
+              }}
+              onMouseUp={() => setBeforeAfter(false)}
+              onMouseLeave={() => setBeforeAfter(false)}
+              onTouchStart={() => {
+                if (hasTextureLayer) setBeforeAfter(true)
+              }}
+              onTouchEnd={() => setBeforeAfter(false)}
+              disabled={!hasTextureLayer}
+              className={`tour-before-after ${actionBtnBaseClass} min-w-[140px] ${
+                beforeAfter
+                  ? 'border-gray-700 bg-gray-800 text-white hover:bg-gray-700'
+                  : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+              }`}
+              title="Удерживайте или нажмите Пробел, чтобы увидеть оригинал без текстур"
             >
-              <UndoIcon />
-              Отменить
+              <EyeIcon />
+              Оригинал
             </button>
-            <button
-              type="button"
-              onClick={() => redo()}
-              disabled={!canRedo()}
-              className={`${actionBtnBaseClass} min-w-[100px] border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-40`}
-              title="Повторить отменённое изменение (Ctrl+Y)"
-            >
-              <RedoIcon />
-              Вернуть
-            </button>
+            <div className="mx-1 self-stretch w-px bg-gray-200" />
+            <div className="tour-undo-redo flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => undo()}
+                disabled={!canUndo()}
+                className={`${actionBtnBaseClass} min-w-[100px] border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-40`}
+                title="Отменить последнее изменение области (Ctrl+Z)"
+              >
+                <UndoIcon />
+                Отменить
+              </button>
+              <button
+                type="button"
+                onClick={() => redo()}
+                disabled={!canRedo()}
+                className={`${actionBtnBaseClass} min-w-[100px] border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-40`}
+                title="Повторить отменённое изменение (Ctrl+Y)"
+              >
+                <RedoIcon />
+                Вернуть
+              </button>
+            </div>
           </div>
 
           <div className="mt-1.5 flex min-h-8 flex-wrap items-center gap-1.5 rounded-md bg-gray-50 px-1.5 py-1">
-            <div className="ml-auto flex items-center gap-2 rounded-md border border-gray-200 bg-white px-2 py-1"
+            <div className="ml-auto flex items-center gap-2 rounded-md border border-gray-200 bg-white px-2 py-1 tour-texture-scale"
               title="Масштаб отображения текстуры на выбранной области"
             >
               <label className="text-xs font-medium text-gray-600" htmlFor="texture-scale">
@@ -485,6 +564,13 @@ export function Canvas2D({
         {isDetecting && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/30 text-white">
             {sceneMode === 'exterior' ? 'Определение фасада…' : 'Определение стен…'}
+          </div>
+        )}
+        {!isDetecting && isPhotoLoaded && walls.length > 0 && !Object.values(wallTextures).some(Boolean) && (
+          <div className="pointer-events-none absolute inset-x-0 bottom-4 flex justify-center">
+            <div className="rounded-lg bg-gray-900/80 px-4 py-2 text-xs text-white shadow-lg">
+              Выберите стену, затем профиль и цвет на правой панели
+            </div>
           </div>
         )}
       </div>

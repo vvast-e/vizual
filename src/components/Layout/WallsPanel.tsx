@@ -1,8 +1,10 @@
-import { useCallback } from 'react'
+import { useCallback, useState } from 'react'
 import { Eye, EyeOff, Trash2, Plus, Square, Eraser } from 'lucide-react'
 import { useWallStore } from '@/store/useWallStore'
 import { useUIStore } from '@/store/useUIStore'
 import { useMaterialStore } from '@/store/useMaterialStore'
+import { toast } from 'sonner'
+import { ConfirmDialog } from '@/components/UI/ConfirmDialog'
 
 const WALL_COLORS = [
   '#3b82f6', // blue
@@ -31,6 +33,7 @@ export function WallsPanel({ onStartCustomMask, isDrawingCustomMask, onCancelCus
   const toggleWallVisibility = useUIStore((s) => s.toggleWallVisibility)
   const setWallTexture = useWallStore((s) => s.setWallTexture)
   const selectedMaterial = useMaterialStore((s) => s.selectedMaterial)
+  const [confirmDeleteWallId, setConfirmDeleteWallId] = useState<number | null>(null)
 
   const handleWallClick = useCallback(
     (wallId: number) => {
@@ -94,9 +97,10 @@ export function WallsPanel({ onStartCustomMask, isDrawingCustomMask, onCancelCus
                       <button
                         type="button"
                         onClick={(e) => {
-                          e.stopPropagation()
-                          setWallTexture(wall.id, null)
-                        }}
+                        e.stopPropagation()
+                        setWallTexture(wall.id, null)
+                        toast.success('Текстура очищена')
+                      }}
                         className="rounded p-1 text-gray-400 transition-colors hover:bg-orange-100 hover:text-orange-500"
                         title="Очистить текстуру"
                       >
@@ -107,7 +111,7 @@ export function WallsPanel({ onStartCustomMask, isDrawingCustomMask, onCancelCus
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation()
-                        removeWall(wall.id)
+                        setConfirmDeleteWallId(wall.id)
                       }}
                       className="rounded p-1 text-gray-400 transition-colors hover:bg-red-100 hover:text-red-500"
                       title="Удалить"
@@ -154,6 +158,28 @@ export function WallsPanel({ onStartCustomMask, isDrawingCustomMask, onCancelCus
           </p>
         </div>
       )}
+      {selectedWallId != null && !selectedMaterial && (
+        <div className="border-t border-gray-100 bg-amber-50 px-4 py-2">
+          <p className="text-xs text-amber-700">
+            Выберите профиль и цвет на правой панели
+          </p>
+        </div>
+      )}
+      <ConfirmDialog
+        open={confirmDeleteWallId !== null}
+        onOpenChange={(open) => { if (!open) setConfirmDeleteWallId(null) }}
+        title="Удалить стену?"
+        description="Область и наложенная текстура будут удалены."
+        confirmLabel="Удалить"
+        onConfirm={() => {
+          if (confirmDeleteWallId !== null) {
+            removeWall(confirmDeleteWallId)
+            toast.success('Стена удалена')
+            setConfirmDeleteWallId(null)
+          }
+        }}
+        variant="danger"
+      />
     </aside>
   )
 }

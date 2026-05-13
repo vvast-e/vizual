@@ -46,6 +46,7 @@ export function useCanvas2D({
   const [textureScale, setTextureScaleState] = useState(0.25)
   const [hasTextureLayer, setHasTextureLayer] = useState(false)
   const [isPhotoLoaded, setIsPhotoLoaded] = useState(false)
+  const [beforeAfter, setBeforeAfter] = useState(false)
   
   const textureLayersRef = useRef<Record<string, FabricObject>>({})
   const wallOverlaysRef = useRef<FabricObject[]>([])
@@ -830,8 +831,11 @@ export function useCanvas2D({
 
         if (!isVisible) continue
 
-        const cx = bounds.left + wall.center[0] * scaleX
-        const cy = bounds.top + wall.center[1] * scaleY
+        const polyForCenter = wall.polygon && wall.polygon.length >= 3 ? wall.polygon : wall.corners
+        const centerIx = polyForCenter.reduce((acc, c) => acc + c[0], 0) / polyForCenter.length
+        const centerIy = polyForCenter.reduce((acc, c) => acc + c[1], 0) / polyForCenter.length
+        const cx = bounds.left + centerIx * scaleX
+        const cy = bounds.top + centerIy * scaleY
         const btn = new Rect({
           width: 36,
           height: 22,
@@ -1234,6 +1238,14 @@ export function useCanvas2D({
     canvas?.requestRenderAll()
   }, [])
 
+  // Переключение "до/после" — скрывает/показывает все слои текстур
+  useEffect(() => {
+    for (const layer of Object.values(textureLayersRef.current)) {
+      ;(layer as unknown as { set: (o: Record<string, unknown>) => void }).set({ visible: !beforeAfter })
+    }
+    canvasInstanceRef.current?.requestRenderAll()
+  }, [beforeAfter])
+
   const clearFacadeSplitDraft = useCallback(() => {
     const canvas = canvasInstanceRef.current
     if (facadeSplitPreviewLineRef.current && canvas) {
@@ -1273,6 +1285,8 @@ export function useCanvas2D({
     setTextureScale,
     hasTextureLayer,
     isPhotoLoaded,
+    beforeAfter,
+    setBeforeAfter,
     undoCustomMask,
     redoCustomMask,
     get canUndoCustomMask() {

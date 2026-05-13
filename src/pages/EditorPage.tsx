@@ -112,6 +112,15 @@ export function EditorPage() {
     setIsDrawingCustomMask(false)
   }, [])
 
+  const handleChangePhoto = useCallback(() => {
+    setHideWallMasks(true)
+    setMaterialWidgetOpen(false)
+    setColorWidgetOpen(false)
+    setSelectedMaterial(null)
+    setSelectedColor(null)
+    navigate('/upload')
+  }, [setHideWallMasks, setSelectedMaterial, setSelectedColor, navigate])
+
   const handleCustomMaskComplete = useCallback(
     (corners: [number, number][]) => {
       const newId = Date.now()
@@ -134,7 +143,7 @@ export function EditorPage() {
   return (
     <div className="flex h-screen flex-col">
       <OnboardingTour />
-      <EditorHeader />
+      <EditorHeader onRequestChangePhoto={handleChangePhoto} />
       <div className="flex flex-1 overflow-hidden">
         <WallsPanel
           onStartCustomMask={handleStartCustomMask}
@@ -147,7 +156,7 @@ export function EditorPage() {
             onCustomMaskComplete={handleCustomMaskComplete}
           />
         </main>
-        <aside className="flex w-[200px] flex-shrink-0 flex-col gap-3 border-l border-gray-200 bg-white p-4">
+        <aside className="tour-materials-panel flex w-[360px] flex-shrink-0 flex-col gap-3 border-l border-gray-200 bg-white p-4">
           {/* Кнопка Материалы */}
           <button
             type="button"
