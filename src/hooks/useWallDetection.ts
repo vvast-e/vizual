@@ -3,6 +3,9 @@ import type { WallData } from '@/store/useWallStore'
 export interface DetectWallsResponse {
   walls: WallData[]
   image_size: { width: number; height: number }
+  masks?: {
+    wall_minus_holes?: string
+  }
 }
 
 export interface DetectExteriorResponse {

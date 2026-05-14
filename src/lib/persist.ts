@@ -11,6 +11,7 @@ interface PersistedState {
   wallImageSize: ReturnType<typeof useWallStore.getState>['wallImageSize']
   wallTextures: ReturnType<typeof useWallStore.getState>['wallTextures']
   exteriorMaskBase64: string | null
+  interiorMaskBase64: string | null
   sceneMode: ReturnType<typeof useUIStore.getState>['sceneMode']
 }
 
@@ -26,6 +27,7 @@ export function saveState() {
       wallImageSize: wallState.wallImageSize,
       wallTextures: wallState.wallTextures,
       exteriorMaskBase64: wallState.exteriorMaskBase64,
+      interiorMaskBase64: wallState.interiorMaskBase64,
       sceneMode: uiState.sceneMode,
     }
 
@@ -65,6 +67,9 @@ export function loadState(): boolean {
     if (state.exteriorMaskBase64) {
       useWallStore.getState().setExteriorMaskBase64(state.exteriorMaskBase64)
     }
+    if (state.interiorMaskBase64) {
+      useWallStore.getState().setInteriorMaskBase64(state.interiorMaskBase64)
+    }
 
     return true
   } catch {
@@ -77,6 +82,7 @@ export function clearState() {
   useVisualizerStore.getState().setPhotoDataUrl(null)
   useWallStore.getState().setWalls([], null)
   useWallStore.getState().setExteriorMaskBase64(null)
+  useWallStore.getState().setInteriorMaskBase64(null)
 }
 
 export function initPersistence() {

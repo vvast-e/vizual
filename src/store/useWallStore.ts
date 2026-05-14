@@ -33,8 +33,11 @@ interface WallState {
   wallRawTextures: Record<number, string | null>
   /** Base64 PNG маски фасада (wall_minus_holes) для ручного split */
   exteriorMaskBase64: string | null
+  /** Base64 PNG маски интерьера (wall_minus_holes), для исключения окон/дверей при текстурировании */
+  interiorMaskBase64: string | null
   setWalls: (walls: WallData[], imageSize: WallImageSize | null, resetTextures?: boolean) => void
   setExteriorMaskBase64: (mask: string | null) => void
+  setInteriorMaskBase64: (mask: string | null) => void
   selectWall: (id: number | null) => void
   setDetecting: (v: boolean) => void
   setWallTexture: (wallId: number, textureUrl: string | null, rawUrl?: string | null) => void
@@ -55,6 +58,7 @@ export const useWallStore = create<WallState>((set) => ({
   wallTextures: {},
   wallRawTextures: {},
   exteriorMaskBase64: null,
+  interiorMaskBase64: null,
   setWalls: (walls, wallImageSize, resetTextures = true) =>
     set((s) => ({
       walls,
@@ -71,8 +75,10 @@ export const useWallStore = create<WallState>((set) => ({
             Object.entries(s.wallRawTextures).filter(([id]) => walls.some((w) => w.id === Number(id)))
           ),
       exteriorMaskBase64: wallImageSize == null ? null : s.exteriorMaskBase64,
+      interiorMaskBase64: wallImageSize == null ? null : s.interiorMaskBase64,
     })),
   setExteriorMaskBase64: (exteriorMaskBase64) => set({ exteriorMaskBase64 }),
+  setInteriorMaskBase64: (interiorMaskBase64) => set({ interiorMaskBase64 }),
   selectWall: (id) => set({ selectedWallId: id }),
   setDetecting: (isDetecting) => set({ isDetecting }),
   setWallTexture: (wallId, textureUrl, rawUrl) =>

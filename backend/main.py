@@ -866,7 +866,19 @@ async def detect_walls(file: UploadFile = File(...)):
             img_np = image_resize(img_np, height=600)
             Image.fromarray(img_np).save(tmp_path)
 
+        # Capture resized bytes for downstream window/door detection
+        with open(tmp_path, "rb") as f:
+            resized_bytes = f.read()
+
         result = await asyncio.to_thread(_detect_walls_sync, tmp_path)
+
+        # Detect windows/doors and build wall_minus_holes mask so the interior
+        # texturing pipeline can carve openings out the same way exterior does.
+        try:
+            result["masks"] = await _build_interior_wall_minus_holes(resized_bytes, result)
+        except Exception as e:
+            print(f"[detect-walls] openings detection failed: {e!r}")
+
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=repr(e))
@@ -875,6 +887,50 @@ async def detect_walls(file: UploadFile = File(...)):
             os.unlink(tmp_path)
         except OSError:
             pass
+
+
+async def _build_interior_wall_minus_holes(image_bytes: bytes, walls_result: dict) -> dict:
+    """Detect window/door openings inside the union of detected walls and return
+    a base64 PNG mask where wall pixels remain 255 and opening pixels are 0."""
+    from exterior_pipeline import (
+        detect_openings_bboxes,
+        sam_masks_from_bboxes_batch,
+        encode_mask_png_base64,
+    )
+
+    image_size = walls_result.get("image_size") or {}
+    width = int(image_size.get("width") or 0)
+    height = int(image_size.get("height") or 0)
+    walls = walls_result.get("walls") or []
+    if width <= 0 or height <= 0 or not walls:
+        return {}
+
+    openings = await detect_openings_bboxes(
+        image_bytes, [0.0, 0.0, float(width), float(height)]
+    )
+    all_bboxes = list(openings.get("windows", [])) + list(openings.get("doors", []))
+
+    holes_mask = np.zeros((height, width), dtype=np.uint8)
+    if all_bboxes:
+        sam_masks = await sam_masks_from_bboxes_batch(image_bytes, all_bboxes)
+        for m in sam_masks:
+            if m is None:
+                continue
+            if m.shape != holes_mask.shape:
+                m = cv2.resize(m, (width, height), interpolation=cv2.INTER_NEAREST)
+            holes_mask = cv2.bitwise_or(holes_mask, m)
+
+    wall_union = np.zeros((height, width), dtype=np.uint8)
+    for wall in walls:
+        pts = np.array(wall.get("corners") or [], dtype=np.int32)
+        if pts.size >= 6:
+            cv2.fillPoly(wall_union, [pts], color=255)
+
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
+    holes_dilated = cv2.dilate(holes_mask, kernel, iterations=1)
+    wall_minus_holes = cv2.bitwise_and(wall_union, cv2.bitwise_not(holes_dilated))
+
+    return {"wall_minus_holes": encode_mask_png_base64(wall_minus_holes)}
 
 
 MAX_IMAGE_SIZE = int(os.getenv("MAX_IMAGE_SIZE", "1920"))

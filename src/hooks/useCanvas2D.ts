@@ -62,6 +62,26 @@ export function useCanvas2D({
   const facadeSplitTargetWallIdRef = useRef<number | null>(null)
   const facadeSplitPreviewLineRef = useRef<Path | null>(null)
 
+  const interiorMaskImageRef = useRef<{ b64: string; img: HTMLImageElement } | null>(null)
+
+  const loadInteriorMaskImage = useCallback(async (): Promise<HTMLImageElement | null> => {
+    const b64 = useWallStore.getState().interiorMaskBase64
+    if (!b64) {
+      interiorMaskImageRef.current = null
+      return null
+    }
+    const cached = interiorMaskImageRef.current
+    if (cached && cached.b64 === b64) return cached.img
+    const img = new Image()
+    img.src = b64.startsWith('data:') ? b64 : `data:image/png;base64,${b64}`
+    await new Promise<void>((resolve, reject) => {
+      img.onload = () => resolve()
+      img.onerror = () => reject(new Error('Failed to decode interior mask'))
+    })
+    interiorMaskImageRef.current = { b64, img }
+    return img
+  }, [])
+
   const customMaskModeRef = useRef(customMaskMode)
   customMaskModeRef.current = customMaskMode
   const customMaskPointsRef = useRef<{ x: number; y: number }[]>([])
@@ -996,13 +1016,18 @@ export function useCanvas2D({
 
       const width = canvas.getWidth() ?? containerWidth
       const height = canvas.getHeight() ?? containerHeight
+      const maskImage =
+        sceneMode === 'interior'
+          ? await loadInteriorMaskImage().catch(() => null)
+          : null
       const { canvas: textureCanvas, offsetX, offsetY, localCorners, localPolygon } = await renderPerspectiveWallTexture(
         textureUrl,
         wallCorners,
         width,
         height,
         textureScale,
-        wallPolygon
+        wallPolygon,
+        maskImage
       )
       const img = new Image()
       img.src = textureCanvas.toDataURL()
@@ -1028,7 +1053,7 @@ export function useCanvas2D({
       setHasTextureLayer(true)
       canvas.requestRenderAll()
     },
-    [containerWidth, containerHeight, textureScale, getBackgroundTransform]
+    [containerWidth, containerHeight, textureScale, getBackgroundTransform, loadInteriorMaskImage]
   )
 
   const highlightSelectedWall = useCallback((selectedId: number | null) => {

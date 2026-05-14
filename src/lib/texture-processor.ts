@@ -192,7 +192,8 @@ export async function renderPerspectiveWallTexture(
   canvasWidth: number,
   canvasHeight: number,
   _textureScale: number = 0.25,
-  polygon?: [number, number][]
+  polygon?: [number, number][],
+  maskImage?: HTMLImageElement | null
 ): Promise<{
   canvas: HTMLCanvasElement
   offsetX: number
@@ -262,6 +263,16 @@ export async function renderPerspectiveWallTexture(
     br[0], br[1],
     tr[0], tr[1]
   )
+
+  // Mask: carve openings (windows/doors) out of the rendered texture.
+  // The mask is expected in the same coordinate system as `corners` (wallImageSize),
+  // so we sample the same bbox region without rescaling.
+  if (maskImage && maskImage.width > 0 && maskImage.height > 0) {
+    const prevOp = ctx.globalCompositeOperation
+    ctx.globalCompositeOperation = 'destination-in'
+    ctx.drawImage(maskImage, minX, minY, bboxW, bboxH, 0, 0, bboxW, bboxH)
+    ctx.globalCompositeOperation = prevOp
+  }
 
   return { canvas: offscreen, offsetX: minX, offsetY: minY, localCorners, localPolygon }
 }

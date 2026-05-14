@@ -49,7 +49,8 @@ export function UploadPage() {
           const res = await detectExterior(file)
           useWallStore.getState().setWalls(res.walls ?? [], res.image_size)
           useWallStore.getState().setExteriorMaskBase64(res.masks?.wall_minus_holes ?? null)
-          
+          useWallStore.getState().setInteriorMaskBase64(null)
+
           // Автоматически привязываем перспективу к форме для каждой стены
           const walls = useWallStore.getState().walls
           walls.forEach((wall) => {
@@ -62,6 +63,7 @@ export function UploadPage() {
           const res = await detectWalls(file)
           useWallStore.getState().setWalls(res.walls, res.image_size)
           useWallStore.getState().setExteriorMaskBase64(null)
+          useWallStore.getState().setInteriorMaskBase64(res.masks?.wall_minus_holes ?? null)
           
           // Для интерьера тоже привязываем перспективу
           const walls = useWallStore.getState().walls
