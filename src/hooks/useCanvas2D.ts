@@ -5,7 +5,6 @@ import { useVisualizerStore } from '@/store/useVisualizerStore'
 import { useUIStore } from '@/store/useUIStore'
 import { useWallStore } from '@/store/useWallStore'
 import type { WallData } from '@/store/useWallStore'
-import { useHistoryStore } from '@/store/useHistoryStore'
 import { MAX_PHOTO_SIZE_BYTES, ALLOWED_IMAGE_TYPES } from '@/lib/constants'
 import { splitExteriorWalls } from '@/hooks/useWallDetection'
 import { autoLinkPerspectiveToForm } from '@/lib/perspective-helper'
@@ -339,9 +338,6 @@ export function useCanvas2D({
           splitWallId != null && wallsSnapshot.length > 0
             ? { targetWallId: splitWallId, walls: wallsSnapshot }
             : undefined
-
-        // Сохраняем состояние ДО разрезания
-        useHistoryStore.getState().push()
 
         void splitExteriorWalls(
           maskB64,
@@ -1169,7 +1165,6 @@ export function useCanvas2D({
             const newCorners = autoLinkPerspectiveToForm(wall)
             updateWallCorners(selectedWallId, newCorners)
           }
-          useHistoryStore.getState().push()
         })
 
         canvas.add(handle)
@@ -1222,7 +1217,6 @@ export function useCanvas2D({
             const newCorners = autoLinkPerspectiveToForm(wall)
             updateWallCorners(selectedWallId, newCorners)
           }
-          useHistoryStore.getState().push()
         })
 
         canvas.add(handle)

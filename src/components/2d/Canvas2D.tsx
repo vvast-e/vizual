@@ -469,7 +469,7 @@ export function Canvas2D({
               title="Показать или скрыть контуры областей фасада"
             >
               {hideWallMasks ? <EyeOffIcon /> : <EyeIcon />}
-              {hideWallMasks ? 'Показать области' : 'Скрыть области'}
+              <span translate="no">{hideWallMasks ? 'Показать области' : 'Скрыть области'}</span>
             </button>
             <div className="mx-1 self-stretch w-px bg-gray-200" />
             <button

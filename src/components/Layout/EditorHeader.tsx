@@ -5,6 +5,7 @@ import { useUIStore } from '@/store/useUIStore'
 import { useVisualizerStore } from '@/store/useVisualizerStore'
 import { useWallStore } from '@/store/useWallStore'
 import { useMaterialStore } from '@/store/useMaterialStore'
+import { useHistoryStore } from '@/store/useHistoryStore'
 import { buildExportImageDataUrl, downloadDataUrl } from '@/lib/export-utils'
 import { Home, Building2, Download, RotateCcw, HelpCircle, Upload } from 'lucide-react'
 import { ConfirmDialog } from '@/components/UI/ConfirmDialog'
@@ -35,6 +36,8 @@ export function EditorHeader({ onRequestChangePhoto }: EditorHeaderProps = {}) {
     const prevEditWallCorners = ui.editWallCorners
     const prevWallVisibility = ui.wallVisibility
     const walls = useWallStore.getState().walls
+    const history = useHistoryStore.getState()
+    history.setApplying(true)
     try {
       if (!prevHide) {
         ui.setHideWallMasks(true)
@@ -65,6 +68,7 @@ export function EditorHeader({ onRequestChangePhoto }: EditorHeaderProps = {}) {
       if (!prevHide) {
         ui.setHideWallMasks(false)
       }
+      history.setApplying(false)
     }
   }
 

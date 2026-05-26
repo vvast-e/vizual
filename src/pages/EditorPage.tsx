@@ -10,6 +10,7 @@ import { useVisualizerStore } from '@/store/useVisualizerStore'
 import { useWallStore } from '@/store/useWallStore'
 import { useUIStore } from '@/store/useUIStore'
 import { useMaterialStore } from '@/store/useMaterialStore'
+import { useHistoryStore } from '@/store/useHistoryStore'
 import { loadState } from '@/lib/persist'
 import { TexturePreview } from '@/components/Materials/TexturePreview'
 import type { Material } from '@/types/material'
@@ -60,13 +61,20 @@ export function EditorPage() {
   // Load quick access on mount
   useEffect(() => {
     const saved = loadQuickAccess()
-    if (saved.material) setSelectedMaterial(saved.material)
-    if (saved.color) setSelectedColor(saved.color)
-    if (saved.materials) {
-      saved.materials.forEach((m: Material) => useMaterialStore.getState().addQuickAccessMaterial(m))
-    }
-    if (saved.colors) {
-      saved.colors.forEach((c: Color) => useMaterialStore.getState().addQuickAccessColor(c))
+    const history = useHistoryStore.getState()
+    history.setApplying(true)
+    try {
+      if (saved.material) setSelectedMaterial(saved.material)
+      if (saved.color) setSelectedColor(saved.color)
+      if (saved.materials) {
+        saved.materials.forEach((m: Material) => useMaterialStore.getState().addQuickAccessMaterial(m))
+      }
+      if (saved.colors) {
+        saved.colors.forEach((c: Color) => useMaterialStore.getState().addQuickAccessColor(c))
+      }
+    } finally {
+      history.setApplying(false)
+      history.clear()
     }
   }, [setSelectedMaterial, setSelectedColor])
 

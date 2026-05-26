@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { Material, Color } from '@/types/material'
+import { useHistoryStore } from './useHistoryStore'
 
 interface MaterialState {
   selectedMaterial: Material | null
@@ -25,9 +26,18 @@ export const useMaterialStore = create<MaterialState>((set) => ({
   colorizeOpacity: 1,
   quickAccessMaterials: [],
   quickAccessColors: [],
-  setSelectedMaterial: (selectedMaterial) => set({ selectedMaterial }),
-  setSelectedColor: (selectedColor) => set({ selectedColor }),
-  setColorizeOpacity: (colorizeOpacity) => set({ colorizeOpacity }),
+  setSelectedMaterial: (selectedMaterial) => {
+    useHistoryStore.getState().record('selectedMaterial')
+    set({ selectedMaterial })
+  },
+  setSelectedColor: (selectedColor) => {
+    useHistoryStore.getState().record('selectedColor')
+    set({ selectedColor })
+  },
+  setColorizeOpacity: (colorizeOpacity) => {
+    useHistoryStore.getState().record('colorizeOpacity')
+    set({ colorizeOpacity })
+  },
   addQuickAccessMaterial: (material) =>
     set((state) => {
       if (state.quickAccessMaterials.find((m) => m.id === material.id)) return state

@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { useHistoryStore } from './useHistoryStore'
 
 /** Два региона варпа (нижний + фронтон), с бэкенда экстерьера при len(polygon) >= 5. */
 export interface WallWarpRegion {
@@ -59,7 +60,8 @@ export const useWallStore = create<WallState>((set) => ({
   wallRawTextures: {},
   exteriorMaskBase64: null,
   interiorMaskBase64: null,
-  setWalls: (walls, wallImageSize, resetTextures = true) =>
+  setWalls: (walls, wallImageSize, resetTextures = true) => {
+    useHistoryStore.getState().record()
     set((s) => ({
       walls,
       wallImageSize,
@@ -76,17 +78,27 @@ export const useWallStore = create<WallState>((set) => ({
           ),
       exteriorMaskBase64: wallImageSize == null ? null : s.exteriorMaskBase64,
       interiorMaskBase64: wallImageSize == null ? null : s.interiorMaskBase64,
-    })),
-  setExteriorMaskBase64: (exteriorMaskBase64) => set({ exteriorMaskBase64 }),
-  setInteriorMaskBase64: (interiorMaskBase64) => set({ interiorMaskBase64 }),
+    }))
+  },
+  setExteriorMaskBase64: (exteriorMaskBase64) => {
+    useHistoryStore.getState().record('exteriorMask')
+    set({ exteriorMaskBase64 })
+  },
+  setInteriorMaskBase64: (interiorMaskBase64) => {
+    useHistoryStore.getState().record('interiorMask')
+    set({ interiorMaskBase64 })
+  },
   selectWall: (id) => set({ selectedWallId: id }),
   setDetecting: (isDetecting) => set({ isDetecting }),
-  setWallTexture: (wallId, textureUrl, rawUrl) =>
+  setWallTexture: (wallId, textureUrl, rawUrl) => {
+    useHistoryStore.getState().record(`wallTexture-${wallId}`)
     set((s) => ({
       wallTextures: { ...s.wallTextures, [wallId]: textureUrl },
       wallRawTextures: rawUrl !== undefined ? { ...s.wallRawTextures, [wallId]: rawUrl } : s.wallRawTextures,
-    })),
-  updateWallCorners: (wallId, corners) =>
+    }))
+  },
+  updateWallCorners: (wallId, corners) => {
+    useHistoryStore.getState().record(`cornerDrag-${wallId}`)
     set((s) => ({
       walls: s.walls.map((w) => {
         if (w.id !== wallId) return w
@@ -102,8 +114,10 @@ export const useWallStore = create<WallState>((set) => ({
           center: [Number(cx.toFixed(2)), Number(cy.toFixed(2))] as [number, number],
         }
       }),
-    })),
-  updateWallPolygonVertex: (wallId, vertexIndex, point) =>
+    }))
+  },
+  updateWallPolygonVertex: (wallId, vertexIndex, point) => {
+    useHistoryStore.getState().record(`vertexDrag-${wallId}`)
     set((s) => ({
       walls: s.walls.map((w) => {
         if (w.id !== wallId) return w
@@ -120,8 +134,10 @@ export const useWallStore = create<WallState>((set) => ({
           center: [Number(cx.toFixed(2)), Number(cy.toFixed(2))] as [number, number],
         }
       }),
-    })),
-  removeWall: (wallId) =>
+    }))
+  },
+  removeWall: (wallId) => {
+    useHistoryStore.getState().record()
     set((s) => {
       const newTextures = { ...s.wallTextures }
       const newRawTextures = { ...s.wallRawTextures }
@@ -133,10 +149,13 @@ export const useWallStore = create<WallState>((set) => ({
         wallRawTextures: newRawTextures,
         selectedWallId: s.selectedWallId === wallId ? null : s.selectedWallId,
       }
-    }),
-  addCustomWall: (wall) =>
+    })
+  },
+  addCustomWall: (wall) => {
+    useHistoryStore.getState().record()
     set((s) => ({
       walls: [...s.walls, wall],
       selectedWallId: wall.id,
-    })),
+    }))
+  },
 }))

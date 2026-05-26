@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { useHistoryStore } from './useHistoryStore'
 
 export type MaskTool = 'brush' | 'rect' | 'lasso' | null
 export type SceneMode = 'interior' | 'exterior'
@@ -53,17 +54,31 @@ export const useUIStore = create<UIState>((set) => ({
   setExportModalOpen: (exportModalOpen) => set({ exportModalOpen }),
   setActiveToolbarPanel: (activeToolbarPanel) => set({ activeToolbarPanel }),
   setMaskTool: (maskTool) => set({ maskTool }),
-  setEditWallCorners: (editWallCorners) => set({ editWallCorners }),
-  setEditCornersMode: (editCornersMode) => set({ editCornersMode }),
-  setHideWallMasks: (hideWallMasks) => set({ hideWallMasks }),
-  setSceneMode: (sceneMode) => set({ sceneMode }),
-  toggleWallVisibility: (wallId) =>
+  setEditWallCorners: (editWallCorners) => {
+    useHistoryStore.getState().record('editWallCorners')
+    set({ editWallCorners })
+  },
+  setEditCornersMode: (editCornersMode) => {
+    useHistoryStore.getState().record('editCornersMode')
+    set({ editCornersMode })
+  },
+  setHideWallMasks: (hideWallMasks) => {
+    useHistoryStore.getState().record('hideWallMasks')
+    set({ hideWallMasks })
+  },
+  setSceneMode: (sceneMode) => {
+    useHistoryStore.getState().record('sceneMode')
+    set({ sceneMode })
+  },
+  toggleWallVisibility: (wallId) => {
+    useHistoryStore.getState().record(`wallVisibility-${wallId}`)
     set((s) => ({
       wallVisibility: {
         ...s.wallVisibility,
         [wallId]: s.wallVisibility[wallId] === false ? true : false,
       },
-    })),
+    }))
+  },
   setTourActive: (tourActive) => set({ tourActive }),
   setExteriorSplitLineActive: (exteriorSplitLineActive) => set({ exteriorSplitLineActive }),
 }))

@@ -2,6 +2,7 @@ import { useWallStore } from '@/store/useWallStore'
 import { useVisualizerStore } from '@/store/useVisualizerStore'
 import { useUIStore } from '@/store/useUIStore'
 import { useMaterialStore } from '@/store/useMaterialStore'
+import { useHistoryStore } from '@/store/useHistoryStore'
 
 const STORAGE_KEY = 'vizual-state'
 
@@ -58,17 +59,24 @@ export function loadState(): boolean {
       return false
     }
 
-    useVisualizerStore.getState().setPhotoDataUrl(state.photoDataUrl)
-    useUIStore.getState().setSceneMode(state.sceneMode ?? 'interior')
+    const history = useHistoryStore.getState()
+    history.setApplying(true)
+    try {
+      useVisualizerStore.getState().setPhotoDataUrl(state.photoDataUrl)
+      useUIStore.getState().setSceneMode(state.sceneMode ?? 'interior')
 
-    if (state.walls && state.walls.length > 0 && state.wallImageSize) {
-      useWallStore.getState().setWalls(state.walls, state.wallImageSize)
-    }
-    if (state.exteriorMaskBase64) {
-      useWallStore.getState().setExteriorMaskBase64(state.exteriorMaskBase64)
-    }
-    if (state.interiorMaskBase64) {
-      useWallStore.getState().setInteriorMaskBase64(state.interiorMaskBase64)
+      if (state.walls && state.walls.length > 0 && state.wallImageSize) {
+        useWallStore.getState().setWalls(state.walls, state.wallImageSize)
+      }
+      if (state.exteriorMaskBase64) {
+        useWallStore.getState().setExteriorMaskBase64(state.exteriorMaskBase64)
+      }
+      if (state.interiorMaskBase64) {
+        useWallStore.getState().setInteriorMaskBase64(state.interiorMaskBase64)
+      }
+    } finally {
+      history.setApplying(false)
+      history.clear()
     }
 
     return true
@@ -79,15 +87,29 @@ export function loadState(): boolean {
 
 export function clearState() {
   localStorage.removeItem(STORAGE_KEY)
-  useVisualizerStore.getState().setPhotoDataUrl(null)
-  useWallStore.getState().setWalls([], null)
-  useWallStore.getState().setExteriorMaskBase64(null)
-  useWallStore.getState().setInteriorMaskBase64(null)
+  const history = useHistoryStore.getState()
+  history.setApplying(true)
+  try {
+    useVisualizerStore.getState().setPhotoDataUrl(null)
+    useWallStore.getState().setWalls([], null)
+    useWallStore.getState().setExteriorMaskBase64(null)
+    useWallStore.getState().setInteriorMaskBase64(null)
+  } finally {
+    history.setApplying(false)
+    history.clear()
+  }
 }
 
 export function initPersistence() {
-  useMaterialStore.getState().setSelectedMaterial(null)
-  useMaterialStore.getState().setSelectedColor(null)
+  const history = useHistoryStore.getState()
+  history.setApplying(true)
+  try {
+    useMaterialStore.getState().setSelectedMaterial(null)
+    useMaterialStore.getState().setSelectedColor(null)
+  } finally {
+    history.setApplying(false)
+    history.clear()
+  }
   useWallStore.subscribe(saveState)
   useVisualizerStore.subscribe(saveState)
 }
