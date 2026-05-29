@@ -115,7 +115,7 @@ export function Canvas2D({
       } else if (!s.applying && isApplyingHistoryRef.current) {
         isApplyingHistoryRef.current = false
         justAppliedHistoryRef.current = true
-        queueMicrotask(() => { justAppliedHistoryRef.current = false })
+        // Сбрасывается в no-deps useEffect ниже — после того как все эффекты текущего рендера отработали
       }
     })
   }, [])
@@ -434,6 +434,11 @@ export function Canvas2D({
     }, 300)
     return () => clearTimeout(timer)
   }, [selectedMaterial?.id, isReady, hasTextureLayer, handleApplyTexture])
+
+  // Сбрасываем justApplied ПОСЛЕ всех эффектов этого рендера, чтобы авто-апплай не сработал при undo/redo
+  useEffect(() => {
+    justAppliedHistoryRef.current = false
+  })
 
   return (
     <div className={`flex flex-1 flex-col gap-1 overflow-hidden ${className}`}>

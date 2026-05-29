@@ -1328,6 +1328,6 @@ export function useCanvas2D({
     get canRedoCustomMask() {
       return customMaskFutureRef.current.length > 0
     },
-    hasWallTexture: (wallId: number) => !!textureLayersRef.current[String(wallId)],
+    hasWallTexture: useCallback((wallId: number) => !!textureLayersRef.current[String(wallId)], []),
   }
 }
