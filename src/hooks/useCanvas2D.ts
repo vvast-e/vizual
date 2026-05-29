@@ -995,6 +995,12 @@ export function useCanvas2D({
         })
         URL.revokeObjectURL(objectUrl)
 
+        // Если пока шёл await, undo снял текстуру — не добавляем слой
+        const currentTexture = selectedWallId != null
+          ? useWallStore.getState().wallTextures[selectedWallId]
+          : null
+        if (currentTexture == null) return
+
         const fabricImg = new FabricImage(img, {
           left: bgTx.left,
           top: bgTx.top,
@@ -1035,6 +1041,12 @@ export function useCanvas2D({
         wallPolygon,
         maskImage
       )
+      // Если пока шёл await, undo снял текстуру — не добавляем слой
+      const currentTextureInterior = selectedWallId != null
+        ? useWallStore.getState().wallTextures[selectedWallId]
+        : null
+      if (currentTextureInterior == null) return
+
       const img = new Image()
       img.src = textureCanvas.toDataURL()
       await new Promise((resolve) => { img.onload = resolve })
