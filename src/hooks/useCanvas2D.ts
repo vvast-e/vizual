@@ -4,6 +4,7 @@ import type { FabricObject } from 'fabric'
 import { useVisualizerStore } from '@/store/useVisualizerStore'
 import { useUIStore } from '@/store/useUIStore'
 import { useWallStore } from '@/store/useWallStore'
+import { useHistoryStore } from '@/store/useHistoryStore'
 import type { WallData } from '@/store/useWallStore'
 import { MAX_PHOTO_SIZE_BYTES, ALLOWED_IMAGE_TYPES } from '@/lib/constants'
 import { splitExteriorWalls } from '@/hooks/useWallDetection'
@@ -17,6 +18,8 @@ export interface UseCanvas2DOptions {
   customMaskMode?: boolean
   /** Вызывается когда 4 точки перспективы нарисованы */
   onCustomMaskComplete?: (corners: [number, number][]) => void
+  /** Вызывается при каждом изменении стека customMask (для обновления кнопок Undo/Redo) */
+  onCustomMaskChange?: () => void
 }
 
 export function useCanvas2D({
@@ -25,6 +28,7 @@ export function useCanvas2D({
   containerHeight = 600,
   customMaskMode = false,
   onCustomMaskComplete,
+  onCustomMaskChange,
 }: UseCanvas2DOptions) {
   const canvasInstanceRef = useRef<Canvas | null>(null)
   const [isReady, setIsReady] = useState(false)
@@ -132,6 +136,9 @@ export function useCanvas2D({
     canvas.requestRenderAll()
   }, [])
 
+  const onCustomMaskChangeRef = useRef(onCustomMaskChange)
+  onCustomMaskChangeRef.current = onCustomMaskChange
+
   const undoCustomMask = useCallback(() => {
     if (customMaskHistoryRef.current.length === 0) return
     const prev = customMaskHistoryRef.current.pop()
@@ -139,6 +146,7 @@ export function useCanvas2D({
     customMaskFutureRef.current.push([...customMaskPointsRef.current])
     customMaskPointsRef.current = [...prev]
     rebuildCustomMaskPreview()
+    onCustomMaskChangeRef.current?.()
   }, [rebuildCustomMaskPreview])
 
   const redoCustomMask = useCallback(() => {
@@ -148,6 +156,7 @@ export function useCanvas2D({
     customMaskHistoryRef.current.push([...customMaskPointsRef.current])
     customMaskPointsRef.current = [...next]
     rebuildCustomMaskPreview()
+    onCustomMaskChangeRef.current?.()
   }, [rebuildCustomMaskPreview])
 
   const initCanvas = useCallback(() => {
@@ -188,6 +197,7 @@ export function useCanvas2D({
         customMaskFutureRef.current = []
         const newPoint = { x: scenePoint.x, y: scenePoint.y }
         pts.push(newPoint)
+        onCustomMaskChange?.()
 
         const dot = new Circle({
           left: newPoint.x - 5,
@@ -1159,11 +1169,13 @@ export function useCanvas2D({
         })
 
         handle.on('modified', () => {
-          // Автоматически привязываем перспективу к форме
+          // Автоматически привязываем перспективу к форме (без записи в историю — это авто-линк)
           const wall = useWallStore.getState().walls.find((w) => w.id === selectedWallId)
           if (wall?.polygon) {
             const newCorners = autoLinkPerspectiveToForm(wall)
-            updateWallCorners(selectedWallId, newCorners)
+            const hs = useHistoryStore.getState()
+            hs.setApplying(true)
+            try { updateWallCorners(selectedWallId, newCorners) } finally { hs.setApplying(false) }
           }
         })
 
@@ -1211,11 +1223,13 @@ export function useCanvas2D({
         })
 
         handle.on('modified', () => {
-          // Автоматически привязываем перспективу к форме
+          // Автоматически привязываем перспективу к форме (без записи в историю — это авто-линк)
           const wall = useWallStore.getState().walls.find((w) => w.id === selectedWallId)
           if (wall?.polygon) {
             const newCorners = autoLinkPerspectiveToForm(wall)
-            updateWallCorners(selectedWallId, newCorners)
+            const hs = useHistoryStore.getState()
+            hs.setApplying(true)
+            try { updateWallCorners(selectedWallId, newCorners) } finally { hs.setApplying(false) }
           }
         })
 

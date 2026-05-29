@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback, useState } from 'react'
+import { useRef, useEffect, useCallback, useState, useReducer } from 'react'
 import { useCanvas2D } from '@/hooks/useCanvas2D'
 import { useVisualizerStore } from '@/store/useVisualizerStore'
 import { useMaterialStore } from '@/store/useMaterialStore'
@@ -104,6 +104,25 @@ export function Canvas2D({
 
   const { selectedColor, colorizeOpacity, getColorizedTextureUrl } = useColorize()
   const { undo, redo, canUndo, canRedo } = useHistoryStore()
+
+  // Отслеживаем, когда история применяется (undo/redo), чтобы подавить авто-апплай текстур
+  const isApplyingHistoryRef = useRef(false)
+  const justAppliedHistoryRef = useRef(false)
+  useEffect(() => {
+    return useHistoryStore.subscribe((s) => {
+      if (s.applying && !isApplyingHistoryRef.current) {
+        isApplyingHistoryRef.current = true
+      } else if (!s.applying && isApplyingHistoryRef.current) {
+        isApplyingHistoryRef.current = false
+        justAppliedHistoryRef.current = true
+        queueMicrotask(() => { justAppliedHistoryRef.current = false })
+      }
+    })
+  }, [])
+
+  // Для перерисовки кнопок Undo/Redo при изменении стека customMask
+  const [, forceRerender] = useReducer((x: number) => x + 1, 0)
+
   const actionBtnBaseClass =
     'inline-flex h-8 items-center justify-center rounded-md border px-3 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 gap-1'
 
@@ -122,23 +141,9 @@ export function Canvas2D({
     return () => observer.disconnect()
   }, [])
 
-  // Ctrl+Z / Ctrl+Y hotkeys for undo/redo
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if ((e.target as HTMLElement)?.tagName === 'INPUT' || (e.target as HTMLElement)?.tagName === 'TEXTAREA') return
-      const ctrl = e.ctrlKey || e.metaKey
-      if (!ctrl) return
-      if (e.key === 'z' && !e.shiftKey) {
-        e.preventDefault()
-        if (canUndo()) undo()
-      } else if (e.key === 'y' || (e.key === 'z' && e.shiftKey)) {
-        e.preventDefault()
-        if (canRedo()) redo()
-      }
-    }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
-  }, [undo, redo, canUndo, canRedo])
+  // Ctrl+Z / Ctrl+Y hotkeys — подключаются ниже, после useCanvas2D (чтобы иметь доступ к undoCustomMask)
+  const undoCustomMaskRef = useRef<() => void>(() => {})
+  const redoCustomMaskRef = useRef<() => void>(() => {})
 
   const {
     isReady,
@@ -158,13 +163,48 @@ export function Canvas2D({
     canvasInstanceRef,
     beforeAfter,
     setBeforeAfter,
+    undoCustomMask,
+    redoCustomMask,
+    canUndoCustomMask,
+    canRedoCustomMask,
   } = useCanvas2D({
     canvasRef,
     containerWidth: canvasSize.width,
     containerHeight: canvasSize.height,
     customMaskMode,
     onCustomMaskComplete,
+    onCustomMaskChange: forceRerender,
   })
+
+  // Обновляем рефы на функции customMask (рефы нужны для hotkey-эффекта ниже)
+  undoCustomMaskRef.current = undoCustomMask
+  redoCustomMaskRef.current = redoCustomMask
+
+  // Ctrl+Z / Ctrl+Y hotkeys for undo/redo
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.target as HTMLElement)?.tagName === 'INPUT' || (e.target as HTMLElement)?.tagName === 'TEXTAREA') return
+      const ctrl = e.ctrlKey || e.metaKey
+      if (!ctrl) return
+      if (e.key === 'z' && !e.shiftKey) {
+        e.preventDefault()
+        if (customMaskMode) {
+          undoCustomMaskRef.current()
+        } else {
+          if (canUndo()) undo()
+        }
+      } else if (e.key === 'y' || (e.key === 'z' && e.shiftKey)) {
+        e.preventDefault()
+        if (customMaskMode) {
+          redoCustomMaskRef.current()
+        } else {
+          if (canRedo()) redo()
+        }
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [undo, redo, canUndo, canRedo, customMaskMode])
 
   // Space = показать оригинал (до/после)
   useEffect(() => {
@@ -362,7 +402,8 @@ export function Canvas2D({
     }
     if (colorKeyRef.current === key) return
     colorKeyRef.current = key
-
+    // Не авто-применять, если изменение пришло от undo/redo — иначе record() сотрёт future
+    if (isApplyingHistoryRef.current || justAppliedHistoryRef.current) return
     if (!isReady || !selectedMaterial || !hasTextureLayer) return
     const timer = setTimeout(() => {
       handleApplyTexture()
@@ -380,7 +421,8 @@ export function Canvas2D({
     }
     if (prevMaterialIdRef.current === matId) return
     prevMaterialIdRef.current = matId
-
+    // Не авто-применять, если изменение пришло от undo/redo
+    if (isApplyingHistoryRef.current || justAppliedHistoryRef.current) return
     if (!isReady || !selectedMaterial || !hasTextureLayer) return
     const timer = setTimeout(() => {
       handleApplyTexture()
@@ -502,8 +544,8 @@ export function Canvas2D({
             <div className="tour-undo-redo flex items-center gap-1">
               <button
                 type="button"
-                onClick={() => undo()}
-                disabled={!canUndo()}
+                onClick={() => customMaskMode ? undoCustomMask() : undo()}
+                disabled={customMaskMode ? !canUndoCustomMask : !canUndo()}
                 className={`${actionBtnBaseClass} min-w-[100px] border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-40`}
                 title="Отменить последнее изменение области (Ctrl+Z)"
               >
@@ -512,8 +554,8 @@ export function Canvas2D({
               </button>
               <button
                 type="button"
-                onClick={() => redo()}
-                disabled={!canRedo()}
+                onClick={() => customMaskMode ? redoCustomMask() : redo()}
+                disabled={customMaskMode ? !canRedoCustomMask : !canRedo()}
                 className={`${actionBtnBaseClass} min-w-[100px] border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-40`}
                 title="Повторить отменённое изменение (Ctrl+Y)"
               >

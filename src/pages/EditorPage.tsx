@@ -93,7 +93,9 @@ export function EditorPage() {
 
     const hasRuntimeData = Boolean(photoDataUrl) && walls.length > 0 && Boolean(wallImageSize)
     if (hasRuntimeData) {
-      setHideWallMasks(false)
+      const hs = useHistoryStore.getState()
+      hs.setApplying(true)
+      try { setHideWallMasks(false) } finally { hs.setApplying(false) }
       setRestoreChecked(true)
       return
     }
@@ -109,7 +111,9 @@ export function EditorPage() {
     if (!photoDataUrl) return
     if (walls.length === 0) return
     if (!wallImageSize) return
-    setHideWallMasks(false)
+    const hs = useHistoryStore.getState()
+    hs.setApplying(true)
+    try { setHideWallMasks(false) } finally { hs.setApplying(false) }
   }, [photoDataUrl, walls.length, wallImageSize, setHideWallMasks])
 
   const handleStartCustomMask = useCallback(() => {

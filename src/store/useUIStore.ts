@@ -63,6 +63,7 @@ export const useUIStore = create<UIState>((set) => ({
     set({ editCornersMode })
   },
   setHideWallMasks: (hideWallMasks) => {
+    if (useUIStore.getState().hideWallMasks === hideWallMasks) return
     useHistoryStore.getState().record('hideWallMasks')
     set({ hideWallMasks })
   },
