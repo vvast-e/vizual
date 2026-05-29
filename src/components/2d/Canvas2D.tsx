@@ -167,6 +167,7 @@ export function Canvas2D({
     redoCustomMask,
     canUndoCustomMask,
     canRedoCustomMask,
+    hasWallTexture,
   } = useCanvas2D({
     canvasRef,
     containerWidth: canvasSize.width,
@@ -311,15 +312,19 @@ export function Canvas2D({
   }, [selectedColor, colorizeOpacity, getColorizedTextureUrl])
 
 
-  // Sync wall textures removals
+  // Синхронизация текстур с канвасом: удаление и восстановление (после undo/redo)
   useEffect(() => {
-    if (!isReady) return
+    if (!isReady || !wallImageSize) return
     walls.forEach(w => {
-      if (wallTextures[w.id] == null) {
+      const url = wallTextures[w.id]
+      if (url == null) {
         clearTextureFromWall(w.id)
+      } else if (!hasWallTexture(w.id)) {
+        // URL есть в store, но слоя на канвасе нет (например, после redo)
+        void applyTextureToWall(url, w.corners, wallImageSize, w.id)
       }
     })
-  }, [wallTextures, isReady, clearTextureFromWall, walls])
+  }, [wallTextures, isReady, wallImageSize, walls, clearTextureFromWall, applyTextureToWall, hasWallTexture])
 
   const handleApplyTexture = useCallback(async () => {
     try {
