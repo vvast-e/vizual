@@ -52,6 +52,7 @@ export function useCanvas2D({
   const [beforeAfter, setBeforeAfter] = useState(false)
   
   const textureLayersRef = useRef<Record<string, FabricObject>>({})
+  const pendingTextureRequestRef = useRef<Record<string, string>>({})
   const wallOverlaysRef = useRef<FabricObject[]>([])
   const wallDebugShapesRef = useRef<FabricObject[]>([])
   const wallIdByObjectRef = useRef<WeakMap<FabricObject, number>>(new WeakMap())
@@ -957,8 +958,12 @@ export function useCanvas2D({
       }
       
       const layerKey = selectedWallId != null ? String(selectedWallId) : 'background'
+      // Уникальный ID запроса: последний вызов отменяет все предыдущие (защита от двойного вызова)
+      const requestId = `${Date.now()}-${Math.random()}`
+      pendingTextureRequestRef.current[layerKey] = requestId
       if (textureLayersRef.current[layerKey]) {
         canvas.remove(textureLayersRef.current[layerKey])
+        delete textureLayersRef.current[layerKey]
       }
 
       const sceneMode = useUIStore.getState().sceneMode
@@ -995,11 +1000,9 @@ export function useCanvas2D({
         })
         URL.revokeObjectURL(objectUrl)
 
-        // Если пока шёл await, undo снял текстуру — не добавляем слой
-        const currentTexture = selectedWallId != null
-          ? useWallStore.getState().wallTextures[selectedWallId]
-          : null
-        if (currentTexture == null) return
+        // Если пока шёл await успел запуститься новый вызов или undo снял текстуру — не добавляем слой
+        if (pendingTextureRequestRef.current[layerKey] !== requestId) return
+        if (selectedWallId != null && useWallStore.getState().wallTextures[selectedWallId] == null) return
 
         const fabricImg = new FabricImage(img, {
           left: bgTx.left,
@@ -1041,15 +1044,14 @@ export function useCanvas2D({
         wallPolygon,
         maskImage
       )
-      // Если пока шёл await, undo снял текстуру — не добавляем слой
-      const currentTextureInterior = selectedWallId != null
-        ? useWallStore.getState().wallTextures[selectedWallId]
-        : null
-      if (currentTextureInterior == null) return
+      // Если пока шёл await успел запуститься новый вызов или undo снял текстуру — не добавляем слой
+      if (pendingTextureRequestRef.current[layerKey] !== requestId) return
+      if (selectedWallId != null && useWallStore.getState().wallTextures[selectedWallId] == null) return
 
       const img = new Image()
       img.src = textureCanvas.toDataURL()
       await new Promise((resolve) => { img.onload = resolve })
+      if (pendingTextureRequestRef.current[layerKey] !== requestId) return
       const fabricImg = new FabricImage(img, {
         left: offsetX,
         top: offsetY,
