@@ -99,24 +99,30 @@ export function applyColorToTexture(
   return canvas
 }
 
+const TEXTURE_LAYER_DATA_KEY = 'isTextureLayer'
+
 /**
  * Накладывает паттерн текстуры на Fabric Canvas как слой (Rect с Pattern fill).
  * Если передан clipPath (например Group масок), текстура применяется только в области маски.
+ * @param patternScale масштаб повтора паттерна (0.05–1: чем меньше, тем мельче текстура).
+ * @returns добавленный Rect (слой текстуры) для последующего изменения масштаба.
  */
 export async function applyPatternToCanvas(
   canvas: Canvas,
   textureUrl: string,
   repeat: 'repeat' | 'repeat-x' | 'repeat-y' = 'repeat',
   clipPath?: FabricObject,
-  sceneBounds?: { left: number; top: number; width: number; height: number }
-): Promise<void> {
+  sceneBounds?: { left: number; top: number; width: number; height: number },
+  patternScale: number = 0.25
+): Promise<Rect> {
   const patternCanvas = await getPatternCanvas(textureUrl, repeat)
   const w = sceneBounds?.width ?? (canvas.width ?? 0)
   const h = sceneBounds?.height ?? (canvas.height ?? 0)
+  const scale = Math.max(0.05, Math.min(1, patternScale))
   const pattern = new Pattern({
     source: patternCanvas,
     repeat,
-    patternTransform: [0.25, 0, 0, 0.25, 0, 0],
+    patternTransform: [scale, 0, 0, scale, 0, 0],
   })
   const rect = new Rect({
     width: w,
@@ -131,8 +137,144 @@ export async function applyPatternToCanvas(
     evented: false,
     clipPath: clipPath ?? undefined,
   })
+  ;(rect as unknown as { set: (o: Record<string, unknown>) => void }).set({
+    data: { [TEXTURE_LAYER_DATA_KEY]: true },
+  })
   canvas.add(rect)
   canvas.requestRenderAll()
+  return rect
+}
+
+function drawTexturedTriangle(
+  ctx: CanvasRenderingContext2D,
+  src: CanvasImageSource,
+  sx0: number, sy0: number,
+  sx1: number, sy1: number,
+  sx2: number, sy2: number,
+  dx0: number, dy0: number,
+  dx1: number, dy1: number,
+  dx2: number, dy2: number
+): void {
+  ctx.save()
+  ctx.beginPath()
+  ctx.moveTo(dx0, dy0)
+  ctx.lineTo(dx1, dy1)
+  ctx.lineTo(dx2, dy2)
+  ctx.closePath()
+  ctx.clip()
+
+  const denom = (sx1 - sx0) * (sy2 - sy0) - (sx2 - sx0) * (sy1 - sy0)
+  if (Math.abs(denom) < 1e-6) { ctx.restore(); return }
+
+  const a = ((dx1 - dx0) * (sy2 - sy0) - (dx2 - dx0) * (sy1 - sy0)) / denom
+  const c = ((dx2 - dx0) * (sx1 - sx0) - (dx1 - dx0) * (sx2 - sx0)) / denom
+  const e = dx0 - a * sx0 - c * sy0
+  const b = ((dy1 - dy0) * (sy2 - sy0) - (dy2 - dy0) * (sy1 - sy0)) / denom
+  const d = ((dy2 - dy0) * (sx1 - sx0) - (dy1 - dy0) * (sx2 - sx0)) / denom
+  const f = dy0 - b * sx0 - d * sy0
+
+  ctx.setTransform(a, b, c, d, e, f)
+  ctx.drawImage(src, 0, 0)
+  ctx.restore()
+}
+
+
+/**
+ * Рендерит текстуру на четырёхугольник стены с учётом перспективы
+ * через разбиение на 2 треугольника (drawTexturedTriangle).
+ *
+ * @param corners — 4 угла стены в координатах канваса, порядок: [TL, BL, BR, TR]
+ * @param polygon — опциональный многоугольник стены (для обрезки)
+ */
+export async function renderPerspectiveWallTexture(
+  textureUrl: string,
+  corners: [number, number][],
+  canvasWidth: number,
+  canvasHeight: number,
+  _textureScale: number = 0.25,
+  polygon?: [number, number][],
+  maskImage?: HTMLImageElement | null
+): Promise<{
+  canvas: HTMLCanvasElement
+  offsetX: number
+  offsetY: number
+  localCorners: [number, number][]
+  localPolygon?: [number, number][]
+}> {
+  const img = await loadTextureImage(textureUrl)
+  if (corners.length < 4) {
+    const empty = document.createElement('canvas')
+    empty.width = Math.max(1, canvasWidth)
+    empty.height = Math.max(1, canvasHeight)
+    return { canvas: empty, offsetX: 0, offsetY: 0, localCorners: [], localPolygon: [] }
+  }
+
+  const pointsForBBox = polygon && polygon.length >= 3 ? polygon : corners
+  const xs = pointsForBBox.map((c) => c[0])
+  const ys = pointsForBBox.map((c) => c[1])
+  const minX = Math.min(...xs)
+  const maxX = Math.max(...xs)
+  const minY = Math.min(...ys)
+  const maxY = Math.max(...ys)
+  const bboxW = Math.max(1, Math.ceil(maxX - minX))
+  const bboxH = Math.max(1, Math.ceil(maxY - minY))
+
+  const srcCanvas = createPatternCanvas(img, 'repeat', bboxW, bboxH)
+  const localCorners = corners.map(([x, y]) => [x - minX, y - minY] as [number, number])
+  const localPolygon = (polygon && polygon.length >= 3
+    ? polygon
+    : corners
+  ).map(([x, y]) => [x - minX, y - minY] as [number, number])
+
+  const offscreen = document.createElement('canvas')
+  offscreen.width = bboxW
+  offscreen.height = bboxH
+  const ctx = offscreen.getContext('2d')
+  if (!ctx) {
+    return { canvas: offscreen, offsetX: minX, offsetY: minY, localCorners, localPolygon }
+  }
+
+  // Рисуем перспективу: разбиваем quad на 2 треугольника.
+  // Ожидаемый порядок углов: [TL, BL, BR, TR]
+  const [tl, bl, br, tr] = localCorners
+
+  ctx.clearRect(0, 0, bboxW, bboxH)
+
+  // Triangle 1: TL-BL-BR
+  drawTexturedTriangle(
+    ctx,
+    srcCanvas,
+    0, 0,
+    0, bboxH,
+    bboxW, bboxH,
+    tl[0], tl[1],
+    bl[0], bl[1],
+    br[0], br[1]
+  )
+
+  // Triangle 2: TL-BR-TR
+  drawTexturedTriangle(
+    ctx,
+    srcCanvas,
+    0, 0,
+    bboxW, bboxH,
+    bboxW, 0,
+    tl[0], tl[1],
+    br[0], br[1],
+    tr[0], tr[1]
+  )
+
+  // Mask: carve openings (windows/doors) out of the rendered texture.
+  // The mask is expected in the same coordinate system as `corners` (wallImageSize),
+  // so we sample the same bbox region without rescaling.
+  if (maskImage && maskImage.width > 0 && maskImage.height > 0) {
+    const prevOp = ctx.globalCompositeOperation
+    ctx.globalCompositeOperation = 'destination-in'
+    ctx.drawImage(maskImage, minX, minY, bboxW, bboxH, 0, 0, bboxW, bboxH)
+    ctx.globalCompositeOperation = prevOp
+  }
+
+  return { canvas: offscreen, offsetX: minX, offsetY: minY, localCorners, localPolygon }
 }
 
 export { textureCache }

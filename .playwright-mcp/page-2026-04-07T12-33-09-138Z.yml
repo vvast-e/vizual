@@ -1,0 +1,342 @@
+- generic [active] [ref=e1]:
+  - generic:
+    - generic:
+      - link "Перейти к основному контенту" [ref=e2] [cursor=pointer]
+      - link "Справка по использованию специальных возможностей" [ref=e3] [cursor=pointer]:
+        - /url: https://support.google.com/websearch/answer/181196?hl=ru
+      - link "Оставить отзыв о специальных возможностях" [ref=e4] [cursor=pointer]
+  - generic [ref=e9]:
+    - search [ref=e10]:
+      - generic [ref=e12]:
+        - link "Главная страница Google" [ref=e14] [cursor=pointer]:
+          - /url: https://www.google.com/webhp?hl=ru&sa=X&ved=0ahUKEwjwvovh39uTAxUwGxAIHfQ7O3EQPAgJ
+          - img [ref=e15]
+        - generic [ref=e22]:
+          - generic [ref=e23]:
+            - combobox "Найти" [ref=e26]: deep learning texture color transfer preserve pattern structure github deep learning texture color transfer preserve pattern structure github
+            - generic [ref=e27]:
+              - button "Очистить" [ref=e29] [cursor=pointer]:
+                - img [ref=e31]
+              - generic [ref=e34]:
+                - button "Экранная клавиатура" [ref=e35] [cursor=pointer]:
+                  - img [ref=e37]
+                - button "Голосовой поиск" [ref=e39] [cursor=pointer]:
+                  - img [ref=e40]
+                - button "Поиск по картинке" [ref=e42] [cursor=pointer]:
+                  - img [ref=e43]
+          - button "Поиск" [ref=e45] [cursor=pointer]:
+            - img [ref=e48]
+    - generic [ref=e50]:
+      - button "Настройки" [ref=e52] [cursor=pointer]:
+        - img [ref=e55]
+      - generic [ref=e58]:
+        - button "Приложения Google" [ref=e60] [cursor=pointer]:
+          - img [ref=e61]
+        - link "Войти" [ref=e65] [cursor=pointer]:
+          - /url: https://accounts.google.com/ServiceLogin?hl=ru&passive=true&continue=https://www.google.com/search%3Fq%3Ddeep%2Blearning%2Btexture%2Bcolor%2Btransfer%2Bpreserve%2Bpattern%2Bstructure%2Bgithub&ec=futura_srp_og_si_72236_p
+  - generic [ref=e67]:
+    - navigation [ref=e73]:
+      - generic [ref=e77]:
+        - list [ref=e78]:
+          - listitem [ref=e79]:
+            - link "Режим ИИ" [ref=e82] [cursor=pointer]:
+              - /url: /search?q=deep+learning+texture+color+transfer+preserve+pattern+structure+github&sca_esv=5d5eb154281590ac&udm=50&fbs=ADc_l-YxK3swBjTDQHhZTLkQayPpT_Ea-VAabXguoY1I8r3LhPfMB1YEDxJW4qZ-WD77Knk4hJoYJsldJv8WghiYs6eNSB1vHN75y70Y3Br-DL_G1JlLU9sk2xMHuQHI4AWyDNhUeTdR8ZIDL0Vz1OD477vhn70RnQxR_FsML2PTE9jHWeB_mR81l93T0m7UlDpslUFjx771Crm5O9WB_b9f0x6CSY6BrfZ7VPCv-sZjPT9EOyY7U7Wi-O_4QEf5_wClz26tDWi20f32op08Zb5x6BDLOk9uwQ&aep=1&ntc=1&sa=X&ved=2ahUKEwjwvovh39uTAxUwGxAIHfQ7O3EQ2J8OegQIERAE
+              - generic [ref=e85]: Режим ИИ
+          - listitem [ref=e86]:
+            - link "Все" [disabled] [ref=e87]:
+              - generic [ref=e89]: Все
+          - listitem [ref=e90]:
+            - link "Картинки" [ref=e91] [cursor=pointer]:
+              - /url: /search?sca_esv=5d5eb154281590ac&udm=2&fbs=ADc_l-YxK3swBjTDQHhZTLkQayPpT_Ea-VAabXguoY1I8r3LhPfMB1YEDxJW4qZ-WD77Knk4hJoYJsldJv8WghiYs6eNSB1vHN75y70Y3Br-DL_G1JlLU9sk2xMHuQHI4AWyDNhUeTdR8ZIDL0Vz1OD477vhn70RnQxR_FsML2PTE9jHWeB_mR81l93T0m7UlDpslUFjx771Crm5O9WB_b9f0x6CSY6BrfZ7VPCv-sZjPT9EOyY7U7Wi-O_4QEf5_wClz26tDWi20f32op08Zb5x6BDLOk9uwQ&q=deep+learning+texture+color+transfer+preserve+pattern+structure+github&sa=X&ved=2ahUKEwjwvovh39uTAxUwGxAIHfQ7O3EQtKgLegQIFxAB
+              - generic [ref=e93]: Картинки
+          - listitem [ref=e94]:
+            - link "Короткие видео" [ref=e95] [cursor=pointer]:
+              - /url: /search?sca_esv=5d5eb154281590ac&udm=39&fbs=ADc_l-YxK3swBjTDQHhZTLkQayPpT_Ea-VAabXguoY1I8r3LhPfMB1YEDxJW4qZ-WD77Knk4hJoYJsldJv8WghiYs6eNSB1vHN75y70Y3Br-DL_G1JlLU9sk2xMHuQHI4AWyDNhUeTdR8ZIDL0Vz1OD477vhn70RnQxR_FsML2PTE9jHWeB_mR81l93T0m7UlDpslUFjx771Crm5O9WB_b9f0x6CSY6BrfZ7VPCv-sZjPT9EOyY7U7Wi-O_4QEf5_wClz26tDWi20f32op08Zb5x6BDLOk9uwQ&q=deep+learning+texture+color+transfer+preserve+pattern+structure+github&sa=X&ved=2ahUKEwjwvovh39uTAxUwGxAIHfQ7O3EQs6gLegQIFhAB
+              - generic [ref=e97]: Короткие видео
+          - listitem [ref=e98]:
+            - link "Видео" [ref=e99] [cursor=pointer]:
+              - /url: /search?sca_esv=5d5eb154281590ac&udm=7&fbs=ADc_l-YxK3swBjTDQHhZTLkQayPpT_Ea-VAabXguoY1I8r3LhPfMB1YEDxJW4qZ-WD77Knk4hJoYJsldJv8WghiYs6eNSB1vHN75y70Y3Br-DL_G1JlLU9sk2xMHuQHI4AWyDNhUeTdR8ZIDL0Vz1OD477vhn70RnQxR_FsML2PTE9jHWeB_mR81l93T0m7UlDpslUFjx771Crm5O9WB_b9f0x6CSY6BrfZ7VPCv-sZjPT9EOyY7U7Wi-O_4QEf5_wClz26tDWi20f32op08Zb5x6BDLOk9uwQ&q=deep+learning+texture+color+transfer+preserve+pattern+structure+github&sa=X&ved=2ahUKEwjwvovh39uTAxUwGxAIHfQ7O3EQtKgLegQIFRAB
+              - generic [ref=e101]: Видео
+          - listitem [ref=e102]:
+            - link "Покупки" [ref=e103] [cursor=pointer]:
+              - /url: /search?sca_esv=5d5eb154281590ac&udm=28&fbs=ADc_l-YxK3swBjTDQHhZTLkQayPpT_Ea-VAabXguoY1I8r3LhPfMB1YEDxJW4qZ-WD77Knk4hJoYJsldJv8WghiYs6eNSB1vHN75y70Y3Br-DL_G1JlLU9sk2xMHuQHI4AWyDNhUeTdR8ZIDL0Vz1OD477vhn70RnQxR_FsML2PTE9jHWeB_mR81l93T0m7UlDpslUFjx771Crm5O9WB_b9f0x6CSY6BrfZ7VPCv-sZjPT9EOyY7U7Wi-O_4QEf5_wClz26tDWi20f32op08Zb5x6BDLOk9uwQ&q=deep+learning+texture+color+transfer+preserve+pattern+structure+github&ved=1t:220175&ictx=111
+              - generic [ref=e105]: Покупки
+          - listitem [ref=e106]:
+            - link "Книги" [ref=e107] [cursor=pointer]:
+              - /url: /search?sca_esv=5d5eb154281590ac&q=deep+learning+texture+color+transfer+preserve+pattern+structure+github&udm=36&source=lnms&fbs=ADc_l-YxK3swBjTDQHhZTLkQayPpT_Ea-VAabXguoY1I8r3LhPfMB1YEDxJW4qZ-WD77Knk4hJoYJsldJv8WghiYs6eNSB1vHN75y70Y3Br-DL_G1JlLU9sk2xMHuQHI4AWyDNhUeTdR8ZIDL0Vz1OD477vhn70RnQxR_FsML2PTE9jHWeB_mR81l93T0m7UlDpslUFjx771Crm5O9WB_b9f0x6CSY6BrfZ7VPCv-sZjPT9EOyY7U7Wi-O_4QEf5_wClz26tDWi20f32op08Zb5x6BDLOk9uwQ&sa=X&ved=2ahUKEwjwvovh39uTAxUwGxAIHfQ7O3EQ0pQJegQIExAB
+              - generic [ref=e109]: Книги
+          - listitem [ref=e110]:
+            - button "Ещё фильтры" [ref=e111] [cursor=pointer]:
+              - generic "Ещё фильтры" [ref=e112]:
+                - generic [ref=e113]:
+                  - generic [ref=e114]: Ещё
+                  - img [ref=e116]
+        - button "Инструменты" [ref=e119] [cursor=pointer]:
+          - generic [ref=e121]:
+            - generic [ref=e122]: Инструменты
+            - img [ref=e124]
+    - heading "Результаты поиска" [level=1] [ref=e126]
+    - main [ref=e132]:
+      - generic [ref=e136]:
+        - generic [ref=e139]:
+          - heading "Web results" [level=2] [ref=e140]
+          - generic [ref=e141]:
+            - generic [ref=e144]:
+              - link "CedricCaruzzo/Neural-Style-Transfer GitHub https://github.com › Neural-St..." [ref=e146] [cursor=pointer]:
+                - /url: https://github.com/CedricCaruzzo/Neural-Style-Transfer
+                - heading "CedricCaruzzo/Neural-Style-Transfer" [level=3] [ref=e147]
+                - generic [ref=e152]:
+                  - generic [ref=e154]: GitHub
+                  - generic [ref=e156]: https://github.com › Neural-St...
+              - generic [ref=e157]:
+                - generic [ref=e158]: ·
+                - link "Перевести эту страницу" [ref=e159] [cursor=pointer]:
+                  - /url: https://github.com/CedricCaruzzo/Neural-Style-Transfer
+              - button "Об этом результате" [ref=e160] [cursor=pointer]:
+                - img [ref=e163]
+            - generic [ref=e167]:
+              - text: Implementation of Neural Style
+              - emphasis [ref=e168]: Transfer
+              - text: based on the original paper by Gatys et al., with adaptations from
+              - emphasis [ref=e169]: Deep Learning
+              - text: with Python by François Chollet.
+        - generic [ref=e173]:
+          - generic [ref=e176]:
+            - link "Westlake-AGI-Lab/Awesome-Style-Transfer-with-Diffusion- ... GitHub https://github.com › Awesome..." [ref=e178] [cursor=pointer]:
+              - /url: https://github.com/Westlake-AGI-Lab/Awesome-Style-Transfer-with-Diffusion-Models
+              - heading "Westlake-AGI-Lab/Awesome-Style-Transfer-with-Diffusion- ..." [level=3] [ref=e179]
+              - generic [ref=e184]:
+                - generic [ref=e186]: GitHub
+                - generic [ref=e188]: https://github.com › Awesome...
+            - generic [ref=e189]:
+              - generic [ref=e190]: ·
+              - link "Перевести эту страницу" [ref=e191] [cursor=pointer]:
+                - /url: https://github.com/Westlake-AGI-Lab/Awesome-Style-Transfer-with-Diffusion-Models
+            - button "Об этом результате" [ref=e192] [cursor=pointer]:
+              - img [ref=e195]
+          - generic [ref=e199]:
+            - text: This repository contains a curated list of Style
+            - emphasis [ref=e200]: Transfer
+            - text: "with Diffusion Models. The resources are organized into two main categories: Image Synthesis and ..."
+        - generic [ref=e204]:
+          - generic [ref=e207]:
+            - link "neural-style-tf/README.md at master GitHub https://github.com › blob › R..." [ref=e209] [cursor=pointer]:
+              - /url: https://github.com/cysmith/neural-style-tf/blob/master/README.md
+              - heading "neural-style-tf/README.md at master" [level=3] [ref=e210]
+              - generic [ref=e215]:
+                - generic [ref=e217]: GitHub
+                - generic [ref=e219]: https://github.com › blob › R...
+            - generic [ref=e220]:
+              - generic [ref=e221]: ·
+              - link "Перевести эту страницу" [ref=e222] [cursor=pointer]:
+                - /url: https://github.com/cysmith/neural-style-tf/blob/master/README.md
+            - button "Об этом результате" [ref=e223] [cursor=pointer]:
+              - img [ref=e226]
+          - generic [ref=e230]:
+            - emphasis [ref=e231]: Transfer
+            - text: style but not
+            - emphasis [ref=e232]: color
+            - text: . The
+            - emphasis [ref=e233]: color
+            - text: scheme of the original image can be preserved by including the flag --original_colors .
+            - emphasis [ref=e234]: Colors
+            - text: are transferred using ...
+        - generic [ref=e238]:
+          - generic [ref=e241]:
+            - 'link "Wp-Zhang/Deep-Color-Transfer: Deep learning based ... GitHub https://github.com › Wp-Zhang" [ref=e243] [cursor=pointer]':
+              - /url: https://github.com/Wp-Zhang/Deep-Color-Transfer
+              - 'heading "Wp-Zhang/Deep-Color-Transfer: Deep learning based ..." [level=3] [ref=e244]'
+              - generic [ref=e249]:
+                - generic [ref=e251]: GitHub
+                - generic [ref=e253]: https://github.com › Wp-Zhang
+            - generic [ref=e254]:
+              - generic [ref=e255]: ·
+              - link "Перевести эту страницу" [ref=e256] [cursor=pointer]:
+                - /url: https://github.com/Wp-Zhang/Deep-Color-Transfer
+            - button "Об этом результате" [ref=e257] [cursor=pointer]:
+              - img [ref=e260]
+          - generic [ref=e263]: We found that knowledge distillation can speed up model convergence and get a smaller model with similar performance.
+          - generic [ref=e265]: "Не найдено: texture ‎preserve ‎pattern"
+        - generic [ref=e269]:
+          - generic [ref=e272]:
+            - link "Structure-Texture Image Decomposition Using ... Yuhui Quan https://csyhquan.github.io › manuscript › 21-tip-St..." [ref=e274] [cursor=pointer]:
+              - /url: https://csyhquan.github.io/manuscript/21-tip-Structure-Texture%20Image%20Decomposition%20Using%20Discriminative%20Patch%20Recurrence.pdf
+              - heading "Structure-Texture Image Decomposition Using ..." [level=3] [ref=e275]
+              - generic [ref=e280]:
+                - generic [ref=e282]: Yuhui Quan
+                - generic [ref=e284]: https://csyhquan.github.io › manuscript › 21-tip-St...
+            - generic [ref=e285]:
+              - generic:
+                - generic: PDF
+            - button "Об этом результате" [ref=e286] [cursor=pointer]:
+              - img [ref=e289]
+          - generic [ref=e292]:
+            - generic [ref=e293]: "Автор: R Xu · Цитируется: 30 —"
+            - generic [ref=e294]:
+              - text: This paper aims at exploiting the recurrence of
+              - emphasis [ref=e295]: texture patterns
+              - text: ", one important property of"
+              - emphasis [ref=e296]: texture
+              - text: ", to develop a nonlocal transform for"
+              - emphasis [ref=e297]: texture
+              - text: component ...
+        - generic [ref=e301]:
+          - generic [ref=e304]:
+            - link "Neural Style Transfer & Neural Doodles GitHub https://github.com › titu1994" [ref=e306] [cursor=pointer]:
+              - /url: https://github.com/titu1994/Neural-Style-Transfer
+              - heading "Neural Style Transfer & Neural Doodles" [level=3] [ref=e307]
+              - generic [ref=e312]:
+                - generic [ref=e314]: GitHub
+                - generic [ref=e316]: https://github.com › titu1994
+            - generic [ref=e317]:
+              - generic [ref=e318]: ·
+              - link "Перевести эту страницу" [ref=e319] [cursor=pointer]:
+                - /url: https://github.com/titu1994/Neural-Style-Transfer
+            - button "Об этом результате" [ref=e320] [cursor=pointer]:
+              - img [ref=e323]
+          - generic [ref=e327]:
+            - emphasis [ref=e328]: Color
+            - text: preservations will
+            - emphasis [ref=e329]: preserve
+            - text: white areas as content
+            - emphasis [ref=e330]: colors
+            - text: ", and mask"
+            - emphasis [ref=e331]: transfer
+            - text: will
+            - emphasis [ref=e332]: preserve
+            - text: black areas as content image. Masked Style
+            - emphasis [ref=e333]: Transfer
+            - text: (Post ...
+          - generic [ref=e335]: "Не найдено: pattern ‎structure"
+        - generic [ref=e339]:
+          - generic [ref=e342]:
+            - link "Image style transfer using deep learning GitHub https://github.com › neural-sty..." [ref=e344] [cursor=pointer]:
+              - /url: https://github.com/danieleninni/neural-style-transfer
+              - heading "Image style transfer using deep learning" [level=3] [ref=e345]
+              - generic [ref=e350]:
+                - generic [ref=e352]: GitHub
+                - generic [ref=e354]: https://github.com › neural-sty...
+            - generic [ref=e355]:
+              - generic [ref=e356]: ·
+              - link "Перевести эту страницу" [ref=e357] [cursor=pointer]:
+                - /url: https://github.com/danieleninni/neural-style-transfer
+            - button "Об этом результате" [ref=e358] [cursor=pointer]:
+              - img [ref=e361]
+          - generic [ref=e365]:
+            - text: Image style transfer using
+            - emphasis [ref=e366]: deep learning
+            - text: . Contribute to danieleninni/neural-style-transfer development by creating an account on GitHub.
+          - generic [ref=e368]: "Не найдено: texture ‎structure"
+        - generic [ref=e372]:
+          - generic [ref=e375]:
+            - link "Neural Artistic Style and Color Transfer Using Deep Learning arXiv https://arxiv.org › html" [ref=e377] [cursor=pointer]:
+              - /url: https://arxiv.org/html/2508.08608v1
+              - heading "Neural Artistic Style and Color Transfer Using Deep Learning" [level=3] [ref=e378]
+              - generic [ref=e383]:
+                - generic [ref=e385]: arXiv
+                - generic [ref=e387]: https://arxiv.org › html
+            - generic [ref=e388]:
+              - generic [ref=e389]: ·
+              - link "Перевести эту страницу" [ref=e390] [cursor=pointer]:
+                - /url: https://arxiv.org/html/2508.08608v1
+            - button "Об этом результате" [ref=e391] [cursor=pointer]:
+              - img [ref=e394]
+          - generic [ref=e397]:
+            - generic [ref=e398]: 12 авг. 2025 г. —
+            - generic [ref=e399]:
+              - text: Neural artistic style
+              - emphasis [ref=e400]: transfers
+              - text: and blends the content and style representation of one image with the style of another. This enables artists to ...
+        - generic [ref=e404]:
+          - generic [ref=e407]:
+            - link "Deep learning for high-resolution material texture ... Nature https://www.nature.com › art..." [ref=e409] [cursor=pointer]:
+              - /url: https://www.nature.com/articles/s41598-026-42313-5
+              - heading "Deep learning for high-resolution material texture ..." [level=3] [ref=e410]
+              - generic [ref=e415]:
+                - generic [ref=e417]: Nature
+                - generic [ref=e419]: https://www.nature.com › art...
+            - generic [ref=e420]:
+              - generic [ref=e421]: ·
+              - link "Перевести эту страницу" [ref=e422] [cursor=pointer]:
+                - /url: https://www.nature.com/articles/s41598-026-42313-5
+            - button "Об этом результате" [ref=e423] [cursor=pointer]:
+              - img [ref=e426]
+          - generic [ref=e429]:
+            - generic [ref=e430]: "Автор: K Alonso · 2026 —"
+            - generic [ref=e431]:
+              - text: The method integrates a batch-based processing pipeline, a
+              - emphasis [ref=e432]: material
+              - text: decompression-recompression strategy, and a “scalable tiling” (e.g., ...
+        - generic [ref=e436]:
+          - generic [ref=e439]:
+            - link "A Deep Dive Using VGG19 and Gram Matrices in PyTorch Medium · JohnyOnTheSpot 10 месяцев назад" [ref=e441] [cursor=pointer]:
+              - /url: https://medium.com/@JohnyOnTheSpot/neural-style-transfer-from-scratch-a-deep-dive-using-vgg19-and-gram-matrices-in-pytorch-598b272e8fc3
+              - heading "A Deep Dive Using VGG19 and Gram Matrices in PyTorch" [level=3] [ref=e442]
+              - generic [ref=e447]:
+                - generic [ref=e449]: Medium · JohnyOnTheSpot
+                - generic [ref=e451]: 10 месяцев назад
+            - button "Об этом результате" [ref=e452] [cursor=pointer]:
+              - img [ref=e455]
+          - generic [ref=e459]:
+            - emphasis [ref=e460]: Explore Neural Style Transfer with deep learning
+            - text: . This guide covers the concepts and code needed to turn your photos into art using AI.
+          - 'link "deep learning texture color transfer preserve pattern structure github, источник: medium.com" [ref=e463] [cursor=pointer]':
+            - /url: https://medium.com/@JohnyOnTheSpot/neural-style-transfer-from-scratch-a-deep-dive-using-vgg19-and-gram-matrices-in-pytorch-598b272e8fc3
+            - 'img "deep learning texture color transfer preserve pattern structure github, источник: medium.com" [ref=e465]'
+      - navigation [ref=e468]:
+        - heading "Навигация по страницам" [level=1] [ref=e469]
+        - text: "1"
+        - link "Page 2" [ref=e472] [cursor=pointer]:
+          - /url: /search?q=deep+learning+texture+color+transfer+preserve+pattern+structure+github&sca_esv=5d5eb154281590ac&ei=gfnUabD6CLC2wPAP9PfsiQc&start=10&sa=N&sstk=Af77f_c4MiGGmMo5JYgCfmOTpsmYqIa31YQENQyD6kzAt5XphrBcicsOPkCCpBVErtXC27eNJDvI02PEi78FrERCJz7zcnL2jyc59g&ved=2ahUKEwjwvovh39uTAxUwGxAIHfQ7O3EQ8tMDegQICBAE
+          - text: "2"
+        - link "Page 3" [ref=e474] [cursor=pointer]:
+          - /url: /search?q=deep+learning+texture+color+transfer+preserve+pattern+structure+github&sca_esv=5d5eb154281590ac&ei=gfnUabD6CLC2wPAP9PfsiQc&start=20&sa=N&sstk=Af77f_c4MiGGmMo5JYgCfmOTpsmYqIa31YQENQyD6kzAt5XphrBcicsOPkCCpBVErtXC27eNJDvI02PEi78FrERCJz7zcnL2jyc59g&ved=2ahUKEwjwvovh39uTAxUwGxAIHfQ7O3EQ8tMDegQICBAG
+          - text: "3"
+        - link "Page 4" [ref=e476] [cursor=pointer]:
+          - /url: /search?q=deep+learning+texture+color+transfer+preserve+pattern+structure+github&sca_esv=5d5eb154281590ac&ei=gfnUabD6CLC2wPAP9PfsiQc&start=30&sa=N&sstk=Af77f_c4MiGGmMo5JYgCfmOTpsmYqIa31YQENQyD6kzAt5XphrBcicsOPkCCpBVErtXC27eNJDvI02PEi78FrERCJz7zcnL2jyc59g&ved=2ahUKEwjwvovh39uTAxUwGxAIHfQ7O3EQ8tMDegQICBAI
+          - text: "4"
+        - link "Page 5" [ref=e478] [cursor=pointer]:
+          - /url: /search?q=deep+learning+texture+color+transfer+preserve+pattern+structure+github&sca_esv=5d5eb154281590ac&ei=gfnUabD6CLC2wPAP9PfsiQc&start=40&sa=N&sstk=Af77f_c4MiGGmMo5JYgCfmOTpsmYqIa31YQENQyD6kzAt5XphrBcicsOPkCCpBVErtXC27eNJDvI02PEi78FrERCJz7zcnL2jyc59g&ved=2ahUKEwjwvovh39uTAxUwGxAIHfQ7O3EQ8tMDegQICBAK
+          - text: "5"
+        - link "Page 6" [ref=e480] [cursor=pointer]:
+          - /url: /search?q=deep+learning+texture+color+transfer+preserve+pattern+structure+github&sca_esv=5d5eb154281590ac&ei=gfnUabD6CLC2wPAP9PfsiQc&start=50&sa=N&sstk=Af77f_c4MiGGmMo5JYgCfmOTpsmYqIa31YQENQyD6kzAt5XphrBcicsOPkCCpBVErtXC27eNJDvI02PEi78FrERCJz7zcnL2jyc59g&ved=2ahUKEwjwvovh39uTAxUwGxAIHfQ7O3EQ8tMDegQICBAM
+          - text: "6"
+        - link "Page 7" [ref=e482] [cursor=pointer]:
+          - /url: /search?q=deep+learning+texture+color+transfer+preserve+pattern+structure+github&sca_esv=5d5eb154281590ac&ei=gfnUabD6CLC2wPAP9PfsiQc&start=60&sa=N&sstk=Af77f_c4MiGGmMo5JYgCfmOTpsmYqIa31YQENQyD6kzAt5XphrBcicsOPkCCpBVErtXC27eNJDvI02PEi78FrERCJz7zcnL2jyc59g&ved=2ahUKEwjwvovh39uTAxUwGxAIHfQ7O3EQ8tMDegQICBAO
+          - text: "7"
+        - link "Page 8" [ref=e484] [cursor=pointer]:
+          - /url: /search?q=deep+learning+texture+color+transfer+preserve+pattern+structure+github&sca_esv=5d5eb154281590ac&ei=gfnUabD6CLC2wPAP9PfsiQc&start=70&sa=N&sstk=Af77f_c4MiGGmMo5JYgCfmOTpsmYqIa31YQENQyD6kzAt5XphrBcicsOPkCCpBVErtXC27eNJDvI02PEi78FrERCJz7zcnL2jyc59g&ved=2ahUKEwjwvovh39uTAxUwGxAIHfQ7O3EQ8tMDegQICBAQ
+          - text: "8"
+        - link "Page 9" [ref=e486] [cursor=pointer]:
+          - /url: /search?q=deep+learning+texture+color+transfer+preserve+pattern+structure+github&sca_esv=5d5eb154281590ac&ei=gfnUabD6CLC2wPAP9PfsiQc&start=80&sa=N&sstk=Af77f_c4MiGGmMo5JYgCfmOTpsmYqIa31YQENQyD6kzAt5XphrBcicsOPkCCpBVErtXC27eNJDvI02PEi78FrERCJz7zcnL2jyc59g&ved=2ahUKEwjwvovh39uTAxUwGxAIHfQ7O3EQ8tMDegQICBAS
+          - text: "9"
+        - link "Page 10" [ref=e488] [cursor=pointer]:
+          - /url: /search?q=deep+learning+texture+color+transfer+preserve+pattern+structure+github&sca_esv=5d5eb154281590ac&ei=gfnUabD6CLC2wPAP9PfsiQc&start=90&sa=N&sstk=Af77f_c4MiGGmMo5JYgCfmOTpsmYqIa31YQENQyD6kzAt5XphrBcicsOPkCCpBVErtXC27eNJDvI02PEi78FrERCJz7zcnL2jyc59g&ved=2ahUKEwjwvovh39uTAxUwGxAIHfQ7O3EQ8tMDegQICBAU
+          - text: "10"
+        - heading "Следующая" [level=2] [ref=e490]:
+          - link "Следующая" [ref=e491] [cursor=pointer]:
+            - /url: /search?q=deep+learning+texture+color+transfer+preserve+pattern+structure+github&sca_esv=5d5eb154281590ac&ei=gfnUabD6CLC2wPAP9PfsiQc&start=10&sa=N&sstk=Af77f_c4MiGGmMo5JYgCfmOTpsmYqIa31YQENQyD6kzAt5XphrBcicsOPkCCpBVErtXC27eNJDvI02PEi78FrERCJz7zcnL2jyc59g&ved=2ahUKEwjwvovh39uTAxUwGxAIHfQ7O3EQ8NMDegQICBAW
+            - generic [ref=e493]: Следующая
+      - navigation
+    - contentinfo [ref=e494]:
+      - heading "Ссылки в нижнем колонтитуле" [level=1] [ref=e495]
+      - generic [ref=e499]:
+        - generic [ref=e501]:
+          - text: Россия
+          - generic [ref=e503]:
+            - button "Москва - На основе ваших предыдущих действий" [ref=e505] [cursor=pointer]:
+              - generic [ref=e506]: Москва
+              - generic [ref=e508]:
+                - text: "-"
+                - generic [ref=e509]: На основе ваших предыдущих действий
+            - text: "-"
+            - button "Обновить" [ref=e511] [cursor=pointer]: Обновить
+        - generic [ref=e514]:
+          - link "Справка" [ref=e515] [cursor=pointer]:
+            - /url: https://support.google.com/websearch/?p=ws_results_help&hl=ru&fg=1
+          - link "Отправить отзыв" [ref=e516] [cursor=pointer]:
+            - /url: "#"
+          - link "Конфиденциальность" [ref=e517] [cursor=pointer]:
+            - /url: https://policies.google.com/privacy?hl=ru&fg=1
+          - link "Условия" [ref=e518] [cursor=pointer]:
+            - /url: https://policies.google.com/terms?hl=ru&fg=1

@@ -1,7 +1,10 @@
+import { useEffect, useState } from 'react'
 import { useMaterialStore } from '@/store/useMaterialStore'
 import { DEFAULT_MATERIALS } from '@/lib/materials-catalog'
+import { fetchMaterials, materialDtoToMaterial } from '@/lib/materials-api'
 import { MaterialCard } from './MaterialCard'
 import type { Material } from '@/types/material'
+import { useUIStore } from '@/store/useUIStore'
 
 export interface MaterialCatalogProps {
   materials?: Material[]
@@ -9,17 +12,39 @@ export interface MaterialCatalogProps {
 }
 
 export function MaterialCatalog({
-  materials = DEFAULT_MATERIALS,
+  materials: propMaterials,
   className = '',
 }: MaterialCatalogProps) {
+  const sceneMode = useUIStore((s) => s.sceneMode)
   const selectedMaterial = useMaterialStore((s) => s.selectedMaterial)
   const setSelectedMaterial = useMaterialStore((s) => s.setSelectedMaterial)
+  const [apiMaterials, setApiMaterials] = useState<Material[] | null>(null)
 
+  useEffect(() => {
+    if (propMaterials) return // если переданы пропсом — не загружаем
+    let cancelled = false
+    fetchMaterials({
+      visible_only: true,
+      scene_category: sceneMode,
+      page_size: 100,
+    })
+      .then((list) => {
+        if (!cancelled && list.length > 0) {
+          setApiMaterials(list.map(materialDtoToMaterial))
+        }
+      })
+      .catch(() => {
+        // fallback to defaults silently
+      })
+    return () => { cancelled = true }
+  }, [propMaterials, sceneMode])
+
+  const materials = propMaterials ?? apiMaterials ?? DEFAULT_MATERIALS
   const selectedId = selectedMaterial?.id ?? null
 
   return (
     <div className={className} role="listbox" aria-label="Каталог материалов">
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-2">
         {materials.map((material) => (
           <MaterialCard
             key={material.id}

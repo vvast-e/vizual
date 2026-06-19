@@ -3,7 +3,7 @@ import { TEXTURES_BASE_PATH } from './constants'
 
 /**
  * Каталог материалов по умолчанию (пути к текстурам в public).
- * Файлы нужно положить в public/textures/... или заменить URL на реальные.
+ * Используется как fallback, если GET /api/materials не вернул данных или недоступен.
  */
 export const DEFAULT_MATERIALS: Material[] = [
   {
@@ -63,6 +63,18 @@ export const DEFAULT_MATERIALS: Material[] = [
       url: `${TEXTURES_BASE_PATH}/boards/oak.png`,
       name: 'Дуб',
       thumbnailUrl: `${TEXTURES_BASE_PATH}/boards/swatches/oak.png`,
+    },
+    presetColors: [],
+  },
+  {
+    id: 'planken-natural',
+    name: 'Планкен натуральный',
+    category: 'planken',
+    texture: {
+      id: 'tex-planken-natural',
+      url: `${TEXTURES_BASE_PATH}/planken/natural.png`,
+      name: 'Натуральный',
+      thumbnailUrl: `${TEXTURES_BASE_PATH}/planken/swatches/natural.png`,
     },
     presetColors: [],
   },

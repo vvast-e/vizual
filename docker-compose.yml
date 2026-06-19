@@ -1,0 +1,50 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: vizual
+      POSTGRES_PASSWORD: vizual
+      POSTGRES_DB: vizual
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    ports:
+      - "8000:8000"
+      - "8001:8001"
+    volumes:
+      - ./warp-debug:/app/warp-debug
+      - ./exterior-debug:/app/exterior-debug
+      - model-cache:/root/.cache/huggingface
+      - ./:/data
+    environment:
+      - PROJECT_ROOT=/data
+      - DATABASE_URL=postgresql://vizual:vizual@postgres:5432/vizual
+      - EXTERIOR_GDINO_URL=http://127.0.0.1:8001/gdino
+      - EXTERIOR_SAM_URL=http://127.0.0.1:8001/sam
+      - MAX_IMAGE_SIZE=1920
+      - JWT_SECRET_KEY=vizual-prod-secret-change-in-production
+      - FIRST_ADMIN_SETUP_SECRET=vizual-setup-secret-change-in-production
+    depends_on:
+      - postgres
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/nginx.Dockerfile
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  model-cache:
+  pgdata:

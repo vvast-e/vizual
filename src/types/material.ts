@@ -4,7 +4,9 @@
 
 export type MaterialId = string
 
-export type MaterialCategory = 'vagonka' | 'brus' | 'blockhouse' | 'boards' | 'other'
+export type MaterialCategory = 'vagonka' | 'brus' | 'blockhouse' | 'boards' | 'planken' | 'other'
+
+export type ColorCategory = 'wood' | 'metal' | 'wallpaper' | 'paint'
 
 export interface Texture {
   id: string
@@ -17,6 +19,10 @@ export interface Texture {
 export interface Color {
   hex: string
   name?: string
+  /** Идентификатор из API (для быстрого доступа и удаления) */
+  id?: string
+  /** Превью-изображение (каталог цветов из БД) */
+  swatchUrl?: string
 }
 
 export interface Material {

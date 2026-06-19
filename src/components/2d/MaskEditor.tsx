@@ -16,7 +16,7 @@ export interface MaskEditorProps {
 }
 
 export function MaskEditor({
-  drawingMode: _drawingMode,
+  drawingMode,
   onDrawingModeChange,
   brushSize,
   onBrushSizeChange,
@@ -28,6 +28,7 @@ export function MaskEditor({
   disabled,
   className = '',
 }: MaskEditorProps) {
+  void drawingMode
   const handleTool = (tool: MaskTool) => {
     if (disabled) return
     if (tool === maskTool) {
