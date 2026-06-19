@@ -54,6 +54,14 @@ PLANE_SEAM_VERT_TOL_DEG = float(os.getenv("EXTERIOR_PLANE_SEAM_VERT_TOL_DEG", "2
 # Минимальная доля локальной высоты стены, которую ребро должно покрывать по Y.
 PLANE_SEAM_VEXTENT_FRAC = float(os.getenv("EXTERIOR_PLANE_SEAM_VEXTENT_FRAC", "0.45"))
 
+# Мин. доля площади стены, чтобы регион считался ОТДЕЛЬНОЙ гранью, а не островком (окно/шум).
+# Структурный факт «окно << стены»: грань фасада >= ~8% площади; окно/артефакт обычно < 5%.
+PLANE_REGION_MIN_AREA_FRAC = float(os.getenv("EXTERIOR_PLANE_REGION_MIN_AREA_FRAC", "0.08"))
+
+# Защита от битой маски проёмов: если вычитание окон оставляет < этой доли стены,
+# holes_mask игнорируется (маска явно сломана). >50% выреза для нормального фасада невозможно.
+PLANE_HOLES_KEEP_FRAC = float(os.getenv("EXTERIOR_PLANE_HOLES_KEEP_FRAC", "0.5"))
+
 
 # ── 1. Запрос карты нормалей ───────────────────────────────────────────────────────────────────
 
@@ -363,26 +371,28 @@ def _snap_x_to_lsd(
 
 
 def _vertical_seams_from_normals(
-    normals_smooth: np.ndarray,     # H×W×3
-    analysis_mask: np.ndarray,      # H×W uint8, уже без окон/дверей
-    dominant_normals: list[np.ndarray],  # K×3, доминирующие ориентации
+    normals_smooth: np.ndarray,                       # H×W×3
+    analysis_mask: np.ndarray,                        # H×W uint8
+    dominant_normals: list[np.ndarray],               # K×3, доминирующие ориентации
     image_height: int,
     image_width: int,
     vert_tol_deg: float = PLANE_SEAM_VERT_TOL_DEG,
     vextent_frac: float = PLANE_SEAM_VEXTENT_FRAC,
     nms_px: int = 0,
+    debug_dir: str = "",
 ) -> list[int]:
     """
-    Найти x-координаты вертикальных рёбер-разрывов в поле нормалей.
+    Найти x-координаты вертикальных рёбер между планарными гранями — через region-cleaning.
 
-    Принцип (идея пользователя: «найти переход от розового к голубому и строить вертикаль»):
-    1. Каждый пиксель analysis_mask → ближайшая доминирующая ориентация (region-map).
-    2. Граничный пиксель = горизонтальный сосед с другим классом (переход розовый↔голубой).
-    3. Оставить только те связные компоненты границы, которые:
-       - близки к вертикали (|угол от 90°| ≤ vert_tol_deg), И
-       - охватывают ≥ vextent_frac высоты стены в данной X-полосе.
-       Крыша (диагональ) и окна (короткие) этим двум условиям не удовлетворяют.
-    4. Сем x = медиана X компоненты.
+    Принцип («найти переход от розового к голубому и построить вертикаль», без порогов под кадр):
+    1. Каждый пиксель analysis_mask → ближайшая доминирующая ориентация (region_map).
+    2. Region-cleaning: мелкие связные островки каждого класса (окна/шум < PLANE_REGION_MIN_AREA_FRAC
+       площади стены) → -1 (не присвоено). Пустоты заполняются ближайшим сохранённым регионом
+       (евклидов nearest-label fill через distance_transform_edt).
+       Структурный факт: окно ≪ стены → всегда островок, поглощается независимо от bbox.
+    3. Граница = горизонтальный переход в очищенной карте (большие регионы, окна исчезли).
+       Санити-гейты: вертикальность + охват высоты стены (факты об архитектурном угле).
+    4. seam_x = медиана X компоненты, затем NMS.
     """
     if len(dominant_normals) < 2:
         return []
@@ -393,11 +403,9 @@ def _vertical_seams_from_normals(
         return []
 
     an = normals_smooth[ay, ax_arr].astype(np.float64)
-    # Нормализовать
     norms_an = np.linalg.norm(an, axis=1, keepdims=True)
     an = an / (norms_an + 1e-8)
-
-    # Ориентировать в полушарие (как в _orient_to_hemisphere, но без копирования лишнего)
+    # Ориентировать в полушарие (Nz > 0 → задняя поверхность → флип)
     flip = an[:, 2] > 0
     an[flip] = -an[flip]
 
@@ -405,29 +413,65 @@ def _vertical_seams_from_normals(
     dn_norms = np.linalg.norm(dn, axis=1, keepdims=True)
     dn = dn / (dn_norms + 1e-8)
 
-    sims = an @ dn.T  # N×K
+    sims = an @ dn.T   # N×K
     labels = sims.argmax(axis=1).astype(np.int16)
 
     region_map = np.full((image_height, image_width), -1, dtype=np.int16)
     region_map[ay, ax_arr] = labels
 
-    # ── Граница = горизонтальный переход между разными классами ──────────────────────────────
-    left_lab = region_map[:, :-1]   # H×(W-1)
-    right_lab = region_map[:, 1:]
+    # ── Region-cleaning: поглощение мелких островков (окна/шум) ─────────────────────────────
+    wall_area = int(np.count_nonzero(analysis_mask))
+    min_region_px = max(200, int(wall_area * PLANE_REGION_MIN_AREA_FRAC))
+    num_labels = len(dominant_normals)
+
+    region_clean = region_map.copy()
+    for lbl in range(num_labels):
+        lbl_mask = (region_map == lbl).astype(np.uint8)
+        n_cc, cc_map, cc_stats, _ = cv2.connectedComponentsWithStats(lbl_mask, connectivity=8)
+        for cc_id in range(1, n_cc):
+            if cc_stats[cc_id, cv2.CC_STAT_AREA] < min_region_px:
+                region_clean[cc_map == cc_id] = -1   # мелкий островок → не присвоено
+
+    # ── Nearest-label fill: пустоты → ближайший сохранённый регион ───────────────────────────
+    from scipy.ndimage import distance_transform_edt
+
+    seed = region_clean >= 0     # пиксели с валидной меткой
+    gap = (~seed) & (analysis_mask > 0)   # пустоты внутри маски стены
+    if gap.any() and seed.any():
+        # Для каждого не-seed пикселя: координаты ближайшего seed-пикселя
+        _, idx = distance_transform_edt(~seed, return_indices=True)
+        region_filled = region_clean.copy()
+        gy, gx = np.where(gap)
+        region_filled[gy, gx] = region_clean[idx[0][gy, gx], idx[1][gy, gx]]
+    else:
+        region_filled = region_clean.copy()
+    region_filled[analysis_mask == 0] = -1   # вне маски — не присвоено
+
+    # ── Debug: сохранить очищенную карту регионов ────────────────────────────────────────────
+    if debug_dir:
+        try:
+            dbg = np.zeros((image_height, image_width, 3), dtype=np.uint8)
+            dbg[:] = (20, 20, 20)
+            for lbl in range(num_labels):
+                dbg[region_filled == lbl] = _PALETTE[lbl % len(_PALETTE)]
+            cv2.imwrite(os.path.join(debug_dir, "region_clean.png"), dbg)
+        except Exception as _e:
+            logger.debug("[plane_split] region_clean debug failed: %s", _e)
+
+    # ── Граница = горизонтальный переход в очищенной карте ───────────────────────────────────
+    left_lab = region_filled[:, :-1]   # H×(W-1)
+    right_lab = region_filled[:, 1:]
     both_valid = (left_lab >= 0) & (right_lab >= 0)
     is_boundary = both_valid & (left_lab != right_lab)
 
     boundary_map = np.zeros((image_height, image_width), dtype=np.uint8)
-    # Граница находится между пикселями — ставим метку на правый пиксель перехода.
     boundary_map[:, 1:][is_boundary] = 255
 
     if int(np.count_nonzero(boundary_map)) == 0:
         return []
 
-    # ── Связные компоненты границы ─────────────────────────────────────────────────────────
-    num_cc, cc_labels, cc_stats, _ = cv2.connectedComponentsWithStats(boundary_map, connectivity=8)
-
-    # Высота стены по столбцам: сколько строк в analysis_mask присутствует при данном X.
+    # ── Связные компоненты → санити-гейты ────────────────────────────────────────────────────
+    num_cc, cc_labels, _, _ = cv2.connectedComponentsWithStats(boundary_map, connectivity=8)
     col_heights = (analysis_mask > 0).sum(axis=0).astype(np.float32)  # W
 
     seams: list[int] = []
@@ -440,25 +484,23 @@ def _vertical_seams_from_normals(
         y_min, y_max = int(cc_ys.min()), int(cc_ys.max())
         y_extent = y_max - y_min + 1
 
-        # Локальная высота стены в X-диапазоне компоненты
         x_min_cc, x_max_cc = int(cc_xs.min()), int(cc_xs.max())
         local_wall_h = float(col_heights[x_min_cc:x_max_cc + 1].max())
         if local_wall_h < 10:
             continue
 
-        # Фильтр по охвату высоты — геометрический факт: угол дома во всю высоту стены.
+        # Гейт по охвату высоты (факт: архитектурный угол идёт во всю высоту стены)
         if y_extent < vextent_frac * local_wall_h:
             continue
 
-        # Фильтр по вертикальности через PCA/fitLine.
+        # Гейт по вертикальности (факт: архитектурный угол вертикален)
         pts = np.stack([cc_xs, cc_ys], axis=1).astype(np.float32)
         if len(pts) >= 2:
             vx, vy, _, _ = cv2.fitLine(pts, cv2.DIST_L2, 0, 0.01, 0.01)
             vx, vy = float(vx), float(vy)
-            # Угол от горизонтали (0=горизонталь, 90=вертикаль)
             angle_from_horiz = float(np.degrees(np.arctan2(abs(vy), abs(vx) + 1e-8)))
             if angle_from_horiz < (90.0 - vert_tol_deg):
-                continue  # слишком горизонтальное или диагональное
+                continue  # диагональ крыши или мусор
         else:
             continue
 
@@ -473,7 +515,6 @@ def _vertical_seams_from_normals(
             if sx - merged[-1] >= nms_px:
                 merged.append(sx)
             else:
-                # Оставить тот, что ближе к центру компоненты (берём среднее).
                 merged[-1] = (merged[-1] + sx) // 2
         seams = merged
 
@@ -504,11 +545,12 @@ def _clean_submask(mask: np.ndarray, min_area_px: int) -> np.ndarray:
 
 def cluster_planes_by_normals(
     wall_mask: np.ndarray,
-    normals: np.ndarray,                          # H×W×3 float32, единичные векторы
+    normals: np.ndarray,                              # H×W×3 float32, единичные векторы
     image_width: int,
     image_height: int,
-    lsd_vertical_xs: Optional[list[int]] = None, # VP-снаппинг (опционально)
-    holes_mask: Optional[np.ndarray] = None,      # маска окон/дверей (исключить из анализа)
+    lsd_vertical_xs: Optional[list[int]] = None,     # VP-снаппинг (опционально)
+    holes_mask: Optional[np.ndarray] = None,          # маска окон/дверей (исключить из анализа)
+    openings_bboxes: Optional[list[list[float]]] = None,  # reserved — больше не форвардится в seam-функцию
     min_area_ratio: float = PLANE_MIN_AREA_RATIO,
     max_walls: int = PLANE_MAX_K,
     debug_dir: str = "",
@@ -532,10 +574,22 @@ def cluster_planes_by_normals(
     min_area_px = max(200, int(total_px * min_area_ratio))
 
     # analysis_mask = wall_mask без окон/дверей (нормали стёкол не участвуют в поиске рёбер).
+    # Защита: если маска проёмов битая и вырезает > половины стены — игнорируем её
+    # (вертикальный гейт всё равно отфильтрует реальные кромки окон).
+    analysis_mask = wall_mask
+    debug["holes_ignored"] = False
     if holes_mask is not None and holes_mask.shape == wall_mask.shape:
-        analysis_mask = np.where(holes_mask > 0, 0, wall_mask).astype(np.uint8)
-    else:
-        analysis_mask = wall_mask
+        candidate = np.where(holes_mask > 0, 0, wall_mask).astype(np.uint8)
+        wall_area = int(np.count_nonzero(wall_mask))
+        cand_area = int(np.count_nonzero(candidate))
+        if wall_area > 0 and cand_area >= PLANE_HOLES_KEEP_FRAC * wall_area:
+            analysis_mask = candidate
+        else:
+            debug["holes_ignored"] = True
+            logger.warning(
+                "[plane_split] holes_mask ignored: removes %.0f%% of wall (%d/%d) — broken openings",
+                100.0 * (1.0 - cand_area / max(wall_area, 1)), cand_area, wall_area,
+            )
 
     ys, xs = np.where(analysis_mask > 0)
     if len(ys) < 500:
@@ -620,11 +674,12 @@ def cluster_planes_by_normals(
             _save_debug(debug_dir, normals_smooth, plane_masks_merged, plane_normals, {})
         return [], debug
 
-    # ── Детекция вертикальных рёбер по разрывам поля нормалей ─────────────────────────────────
+    # ── Детекция вертикальных рёбер через region-cleaning ─────────────────────────────────────
     nms_px = max(40, int(image_width * 0.04))
     seams_raw = _vertical_seams_from_normals(
         normals_smooth, analysis_mask, plane_normals,
         image_height, image_width, nms_px=nms_px,
+        debug_dir=debug_dir,
     )
 
     # ── Снап каждого стыка к ближайшему LSD-ребру ──────────────────────────────────────────────

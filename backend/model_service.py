@@ -85,6 +85,7 @@ def _load_dsine():
             "https://huggingface.co/camenduru/DSINE/resolve/main/dsine.pt",
             file_name="dsine.pt",
             map_location=DEVICE,
+            weights_only=True,
         )
     else:
         state_dict = torch.load(weights_path, map_location=DEVICE, weights_only=True)

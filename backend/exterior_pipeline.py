@@ -3995,6 +3995,7 @@ async def run_exterior_pipeline(image_bytes: bytes, image_width: int, image_heig
                     image_height=image_height,
                     lsd_vertical_xs=lsd_vertical_xs or None,
                     holes_mask=holes_mask,
+                    openings_bboxes=all_opening_bboxes or None,
                     debug_dir=call_dir if EXTERIOR_DEBUG_SAVE else "",
                 )
                 _stage(
