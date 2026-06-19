@@ -7,9 +7,12 @@ import asyncio
 import base64
 import io
 import hashlib
+import logging
 import os
 import time
 import json
+
+logger = logging.getLogger(__name__)
 
 import cv2
 import httpx
@@ -29,6 +32,13 @@ EXTERIOR_SAM_BATCH_ENABLE = os.getenv("EXTERIOR_SAM_BATCH_ENABLE", "1") in {"1",
 EXTERIOR_SAM_BATCH_SIZE = max(1, int(os.getenv("EXTERIOR_SAM_BATCH_SIZE", "8")))
 EXTERIOR_OPENINGS_NMS_IOU = float(os.getenv("EXTERIOR_OPENINGS_NMS_IOU", "0.5"))
 EXTERIOR_OPENINGS_MIN_AREA_PX = int(os.getenv("EXTERIOR_OPENINGS_MIN_AREA_PX", "200"))
+
+# Depth-planes: деление фасада по 3D-геометрии (Depth Anything V2 + кластеризация нормалей).
+# По умолчанию выключено — включить EXTERIOR_DEPTH_SPLIT_ENABLE=1 для тестирования.
+EXTERIOR_DEPTH_SPLIT_ENABLE = os.getenv("EXTERIOR_DEPTH_SPLIT_ENABLE", "0") in {
+    "1", "true", "TRUE", "yes", "YES"
+}
+EXTERIOR_DEPTH_URL = os.getenv("EXTERIOR_DEPTH_URL", "http://127.0.0.1:8001/depth")
 
 # Debug output for investigating mask->front rendering.
 # Saves intermediate PNGs + prints summary to stdout.
@@ -3950,15 +3960,84 @@ async def run_exterior_pipeline(image_bytes: bytes, image_width: int, image_heig
 
 
 
-    # Упрощённый режим: для отладки seam/deometry НЕ переключаемся на depth-арбитр.
-    # Финальный результат = геометрия/seam, чтобы поведение было предсказуемым.
+    # ── Normals-planes арбитр ─────────────────────────────────────────────────────────────
+    # Если EXTERIOR_DEPTH_SPLIT_ENABLE=1, запрашиваем нормали поверхности (DSINE) и
+    # кластеризуем пиксели стены по азимуту нормалей. Разные грани = разные нормали.
+    # VP-снаппинг: граница кластеров сдвигается к ближайшему LSD-ребру (geom_cascade_debug).
+    # При сбое или однородных нормалях (фронталь) — откат на walls_geo (геометрический каскад).
     walls = walls_geo
     split_method = split_method_geo
-    split_arbiter = {
+    split_arbiter: dict = {
         "chosen": "geometry_only",
         "plane_compare_ran": False,
-        "reason": "depth_arbiter_disabled",
+        "reason": "normals_arbiter_disabled",
     }
+
+    if EXTERIOR_DEPTH_SPLIT_ENABLE:
+        try:
+            from plane_split import request_normals, cluster_planes_by_normals
+
+            # LSD-рёбра для VP-снаппинга (если геом-каскад их нашёл)
+            lsd_vertical_xs: list[int] = [
+                int(x) for x in (geom_cascade_debug.get("_split_xs_for_overlay") or [])
+            ]
+
+            t0 = time.perf_counter()
+            normals_map = request_normals(image_bgr)
+            _stage("normals_request", t0, success=normals_map is not None)
+
+            if normals_map is not None:
+                t0 = time.perf_counter()
+                plane_masks, np_debug = cluster_planes_by_normals(
+                    wall_mask=wall_for_split,
+                    normals=normals_map,
+                    image_width=image_width,
+                    image_height=image_height,
+                    lsd_vertical_xs=lsd_vertical_xs or None,
+                    holes_mask=holes_mask,
+                    debug_dir=call_dir if EXTERIOR_DEBUG_SAVE else "",
+                )
+                _stage(
+                    "normal_cluster",
+                    t0,
+                    planes=np_debug.get("planes_found"),
+                    angle_deg=np_debug.get("plane_angle_deg"),
+                    reason=np_debug.get("reason"),
+                    masks=len(plane_masks),
+                    vp_agreement=np_debug.get("vp_snap", {}).get("vp_agreement", False),
+                )
+
+                split_arbiter = {
+                    "chosen": "geometry_only",
+                    "plane_compare_ran": True,
+                    "normals_debug": np_debug,
+                    "reason": np_debug.get("reason", "unknown"),
+                }
+
+                if plane_masks and len(plane_masks) >= 2:
+                    walls_normals = _build_walls_from_component_masks(plane_masks)
+                    if walls_normals:
+                        walls = walls_normals
+                        split_method = "normal_planes"
+                        split_arbiter["chosen"] = "normal_planes"
+                        split_arbiter["walls_count"] = len(walls_normals)
+                    else:
+                        split_arbiter["reason"] = "normals_walls_empty_fallback_geo"
+                else:
+                    split_arbiter["reason"] = np_debug.get("reason", "no_planes_fallback_geo")
+            else:
+                split_arbiter = {
+                    "chosen": "geometry_only",
+                    "plane_compare_ran": True,
+                    "reason": "normals_request_failed",
+                }
+        except Exception as _norm_exc:
+            logger.warning("[exterior] plane_split error (fallback to geometry): %s", _norm_exc)
+            split_arbiter = {
+                "chosen": "geometry_only",
+                "plane_compare_ran": True,
+                "reason": f"normals_exception: {_norm_exc}",
+            }
 
     if EXTERIOR_DEBUG_SAVE:
         try:

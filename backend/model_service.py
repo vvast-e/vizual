@@ -23,16 +23,82 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
 from PIL import Image
 
-DEVICE = "cpu"
+# Устройство: можно переключить на "cuda" через env MODEL_DEVICE для прода с GPU.
+DEVICE = os.getenv("MODEL_DEVICE", "cpu")
+
+# DSINE — монокулярные нормали поверхности для деления фасада на планарные грани.
+# Модель: baegwangbin/DSINE (CVPR 2024 Oral). Загружается из torch.hub cache.
+# Weights: camenduru/DSINE/resolve/main/dsine.pt (скачивается при первом запуске).
+DSINE_HUB_DIR: str = ""   # заполняется при загрузке
 
 gdino_model = None
 gdino_processor = None
 sam_model = None
 sam_processor = None
+dsine_model = None   # DSINE_v02 instance (на CPU/DEVICE)
+
+
+def _load_dsine():
+    """Загрузить DSINE_v02 на DEVICE. Обходит хардкод .to(0) через патч torch.Tensor.to."""
+    import types, sys
+    import torch
+    global dsine_model, DSINE_HUB_DIR
+
+    hub_dir = torch.hub.get_dir()
+    dsine_src = os.path.join(hub_dir, "baegwangbin_DSINE_main")
+
+    # Скачать репо, если ещё нет.
+    if not os.path.isdir(dsine_src):
+        print("[model_service] Downloading DSINE repo...")
+        torch.hub.load("baegwangbin/DSINE", "DSINE", trust_repo=True)  # упадёт на cuda, но репо скачает
+    DSINE_HUB_DIR = dsine_src
+
+    if dsine_src not in sys.path:
+        sys.path.insert(0, dsine_src)
+
+    # Патч: перехватить .to(int) → .to(DEVICE) во время __init__ (иначе → cuda:0)
+    _orig_tensor_to = torch.Tensor.to
+    def _safe_to(self, *args, **kwargs):
+        if args and isinstance(args[0], int):
+            return _orig_tensor_to(self, DEVICE)
+        return _orig_tensor_to(self, *args, **kwargs)
+    torch.Tensor.to = _safe_to
+
+    try:
+        args = types.SimpleNamespace(
+            NNET_architecture="v02", NNET_output_dim=3, NNET_output_type="R",
+            NNET_feature_dim=64, NNET_hidden_dim=64, NNET_encoder_B=5,
+            NNET_decoder_NF=2048, NNET_decoder_BN=False, NNET_decoder_down=8,
+            NNET_learned_upsampling=False,
+            NRN_prop_ps=5, NRN_num_iter_train=5, NRN_num_iter_test=5, NRN_ray_relu=False,
+        )
+        from models.dsine.v02 import DSINE_v02
+        model = DSINE_v02(args)
+    finally:
+        torch.Tensor.to = _orig_tensor_to  # восстановить патч в любом случае
+
+    # Веса: скачать из HuggingFace если нет в кэше.
+    weights_path = os.path.join(hub_dir, "checkpoints", "dsine.pt")
+    if not os.path.exists(weights_path):
+        print("[model_service] Downloading DSINE weights (~278 MB)...")
+        state_dict = torch.hub.load_state_dict_from_url(
+            "https://huggingface.co/camenduru/DSINE/resolve/main/dsine.pt",
+            file_name="dsine.pt",
+            map_location=DEVICE,
+        )
+    else:
+        state_dict = torch.load(weights_path, map_location=DEVICE, weights_only=True)
+
+    model.load_state_dict(state_dict["model"], strict=True)
+    model.eval()
+    model.pixel_coords = model.pixel_coords.to(DEVICE)
+    model = model.to(DEVICE)
+    print(f"[model_service] DSINE loaded ({sum(p.numel() for p in model.parameters())//1_000_000}M params).")
+    return model
 
 
 def _load_all_models():
-    global gdino_model, gdino_processor, sam_model, sam_processor
+    global gdino_model, gdino_processor, sam_model, sam_processor, dsine_model
 
     from transformers import AutoModelForZeroShotObjectDetection, AutoProcessor
     from transformers import SamModel, SamProcessor
@@ -52,6 +118,10 @@ def _load_all_models():
     sam_model = SamModel.from_pretrained(sam_id).to(DEVICE)
     sam_model.eval()
     print("[model_service] SAM loaded.")
+
+    # DSINE — нормали поверхности для деления фасада на планарные грани.
+    print("[model_service] Loading DSINE surface normals model...")
+    dsine_model = _load_dsine()
 
 
 @asynccontextmanager
@@ -213,3 +283,68 @@ async def sam_segment_batch(
         scores.append(float(iou_scores[i, best_idx]))
 
     return {"masks": masks_b64, "scores": scores, "count": len(masks_b64)}
+
+
+@app.post("/normals")
+async def estimate_normals(
+    image: UploadFile = File(...),
+):
+    """
+    Вернуть карту нормалей поверхности (DSINE) для изображения.
+    Ответ: raw float32 bytes (numpy array, shape H×W×3, C-order), единичные векторы.
+    Размеры — в заголовках X-Normals-Height / X-Normals-Width / X-Normals-Channels.
+    Система координат камеры: X вправо, Y вниз, Z от камеры.
+    """
+    if dsine_model is None:
+        raise HTTPException(503, "DSINE model not loaded yet")
+
+    image_bytes = await image.read()
+    img_bgr = cv2.imdecode(np.frombuffer(image_bytes, np.uint8), cv2.IMREAD_COLOR)
+    if img_bgr is None:
+        raise HTTPException(400, "Cannot decode image")
+
+    import torch.nn.functional as F
+    from torchvision import transforms as T
+
+    orig_H, orig_W = img_bgr.shape[:2]
+
+    # RGB float32 [0,1] → tensor 1×3×H×W
+    img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+    t = torch.from_numpy(img_rgb).permute(2, 0, 1).unsqueeze(0).to(DEVICE)
+
+    # Pad до кратного 32 (требование DSINE)
+    pad_h = (32 - orig_H % 32) % 32
+    pad_w = (32 - orig_W % 32) % 32
+    t = F.pad(t, (0, pad_w, 0, pad_h), mode="constant", value=0.0)
+
+    # ImageNet нормализация
+    norm = T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    t = norm(t)
+
+    # Intrinsics: FOV=60° (разумный дефолт для фасадных фото)
+    fov = float(os.getenv("DSINE_FOV_DEG", "60"))
+    f = orig_W / (2 * np.tan(np.radians(fov / 2)))
+    intrins = torch.tensor(
+        [[f, 0, orig_W / 2], [0, f, orig_H / 2], [0, 0, 1]],
+        dtype=torch.float32,
+    ).unsqueeze(0).to(DEVICE)
+
+    with torch.no_grad():
+        pred_norm = dsine_model(t, intrins=intrins)[-1]  # (1, 3, H+pad, W+pad)
+        pred_norm = pred_norm[:, :, :orig_H, :orig_W]    # обрезать паддинг
+
+    # (1, 3, H, W) → (H, W, 3) float32, уже единичные векторы
+    normals_np = pred_norm[0].permute(1, 2, 0).cpu().float().numpy()
+
+    h, w, c = normals_np.shape
+    raw_bytes = normals_np.astype(np.float32).tobytes()
+
+    return Response(
+        content=raw_bytes,
+        media_type="application/octet-stream",
+        headers={
+            "X-Normals-Height": str(h),
+            "X-Normals-Width": str(w),
+            "X-Normals-Channels": str(c),
+        },
+    )
