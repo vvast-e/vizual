@@ -22,6 +22,10 @@ scikit-learn>=1.3.0
 # DSINE surface normals (plane split arbiter)
 geffnet>=1.0.0
 
+# ONNX CPU inference (GDino + DSINE acceleration)
+onnx>=1.15.0
+onnxruntime>=1.17.0
+
 # Admin catalog + PostgreSQL
 sqlalchemy>=2.0.0
 alembic>=1.13.0
