@@ -33,13 +33,23 @@ WARP_DEBUG_DIR = os.path.join(PROJECT_ROOT, "warp-debug")
 WARP_DEBUG_SAVE = True
 DETECT_DEBUG_DIR = os.path.join(PROJECT_ROOT, "detect-debug")
 DETECT_DEBUG_SAVE = os.environ.get("DETECT_DEBUG_SAVE", "1") == "1"
-# ADE20K класс-индексы для интерьерных проёмов (SegFormer):
-ADE_WINDOW_CLASS = 8   # windowpane
-ADE_DOOR_CLASS   = 14  # door
 # Постпроцесс: размер ядра CLOSE для слияния фрагментов (0 = авто по ширине кадра)
 INTERIOR_OPENING_CLOSE_KSIZE = int(os.environ.get("INTERIOR_OPENING_CLOSE_KSIZE", "0"))
 # Постпроцесс: минимальная площадь компоненты проёма в пикселях (0 = авто)
 INTERIOR_MIN_OPENING_AREA_PX = int(os.environ.get("INTERIOR_MIN_OPENING_AREA_PX", "0"))
+# Детекция проёмов по нормалям DSINE: порог углового отклонения от доминантной плоскости стены (градусы)
+INTERIOR_OPENING_NORMAL_DEG = float(os.environ.get("INTERIOR_OPENING_NORMAL_DEG", "30"))
+# ADE20K класс-индексы для интерьерных проёмов (Mask2Former /segformer)
+ADE_WINDOW_CLASS = 8   # windowpane
+ADE_DOOR_CLASS = 14    # door
+ADE_WALL_CLASS = 0     # wall
+# Включить семантическую составляющую (Mask2Former) в консенсус проёмов интерьера
+INTERIOR_OPENING_SEMANTIC_ENABLE = os.environ.get("INTERIOR_OPENING_SEMANTIC_ENABLE", "1") == "1"
+# Минимальная доля wall-пикселей (ADE20K) внутри layout-полигонов стен, ниже которой
+# семантика считается недостоверной для этого кадра и игнорируется (fallback на нормали)
+INTERIOR_SEMANTIC_MIN_WALL_FRACTION = float(os.environ.get("INTERIOR_SEMANTIC_MIN_WALL_FRACTION", "0.15"))
+# Уточнять плоскости стен по семантической wall-маске (вырезать мебель/объекты из wall_minus_holes)
+INTERIOR_WALL_REFINE_ENABLE = os.environ.get("INTERIOR_WALL_REFINE_ENABLE", "1") == "1"
 TEXTURES_DIR = os.path.join(PROJECT_ROOT, "public", "textures")
 ALLOWED_TEX_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
 
@@ -941,14 +951,63 @@ def _consolidate_opening_mask(mask: np.ndarray, width: int, height: int) -> np.n
     return result
 
 
+def _detect_openings_by_normals(normals: np.ndarray, walls: list, width: int, height: int):
+    """Геометрическая детекция проёмов: попиксельное отклонение нормали от доминантной
+    плоскости каждой стены/потолка. Открытый проём (видна другая геометрия под другим
+    углом) даёт большое угловое отклонение; плоская стена — малое.
+
+    Возвращает (openings_raw, deviation_deg):
+    - openings_raw: (H, W) uint8 маска 0/255 сырых кандидатов-проёмов, обрезанная по стенам
+    - deviation_deg: (H, W) float32 карта углового отклонения (для debug-heatmap)
+    """
+    openings_raw = np.zeros((height, width), dtype=np.uint8)
+    deviation_deg = np.zeros((height, width), dtype=np.float32)
+
+    for wall in walls:
+        pts = np.array(wall.get("corners") or [], dtype=np.int32)
+        if pts.size < 6:
+            continue
+
+        wall_mask = np.zeros((height, width), dtype=np.uint8)
+        cv2.fillPoly(wall_mask, [pts], color=255)
+        mask_bool = wall_mask > 0
+        if not np.any(mask_bool):
+            continue
+
+        wall_normals = normals[mask_bool]  # (N, 3)
+        dominant = np.median(wall_normals, axis=0)
+        dom_norm = np.linalg.norm(dominant)
+        if dom_norm < 1e-6:
+            continue
+        dominant = dominant / dom_norm
+
+        dot = np.abs(np.clip(wall_normals @ dominant, -1.0, 1.0))
+        ang_deg = np.degrees(np.arccos(dot))
+
+        ys, xs = np.where(mask_bool)
+        deviation_deg[ys, xs] = ang_deg
+        wall_openings = ang_deg > INTERIOR_OPENING_NORMAL_DEG
+        openings_raw[ys[wall_openings], xs[wall_openings]] = 255
+
+    return openings_raw, deviation_deg
+
+
 async def _build_interior_wall_minus_holes(image_bytes: bytes, walls_result: dict) -> dict:
-    """Detect window/door openings via SegFormer ADE20K semantic segmentation.
+    """Detect openings (doors/passages) via a consensus of Mask2Former ADE20K
+    semantics and DSINE surface-normal geometry.
 
     Returns a base64 PNG mask where wall pixels are 255 and opening pixels are 0.
-    Uses pixel-level class labels (windowpane=8, door=14) — no bbox hallucinations.
+
+    Семантика (windowpane=8, door=14) — основной сигнал для дверей/окон с рамкой.
+    Нормали DSINE ловят безрамочные проходы, где семантика молчит (комната за
+    проёмом просто не размечена как door/window). Итог — объединение обоих масок,
+    обрезанное по layout-полигонам стен. Семантика best-effort: если доля
+    wall-пикселей внутри layout-стен слишком мала (модель "промазала" по кадру),
+    семантическая маска отбрасывается и остаются только нормали.
     """
     import hashlib
     import time as _time
+    from plane_split import request_normals
     from exterior_pipeline import segment_ade20k, encode_mask_png_base64
 
     image_size = walls_result.get("image_size") or {}
@@ -965,31 +1024,78 @@ async def _build_interior_wall_minus_holes(image_bytes: bytes, walls_result: dic
         if pts.size >= 6:
             cv2.fillPoly(wall_union, [pts], color=255)
 
-    # ── Семантическая сегментация интерьера через SegFormer ADE20K ──────────
-    seg = await segment_ade20k(image_bytes)  # (H, W) uint8, значения 0-149
+    # ── Семантика ADE20K (Mask2Former) — best-effort ─────────────────────────
+    windows_raw = np.zeros((height, width), dtype=np.uint8)
+    doors_raw = np.zeros((height, width), dtype=np.uint8)
+    furniture_raw = np.zeros((height, width), dtype=np.uint8)
+    seg_vis = None
+    if INTERIOR_OPENING_SEMANTIC_ENABLE:
+        seg = await segment_ade20k(image_bytes)  # (H, W) uint8, значения 0-149
+        if seg.size > 0:
+            if seg.shape != (height, width):
+                seg = cv2.resize(seg, (width, height), interpolation=cv2.INTER_NEAREST)
 
-    if seg.size == 0:
-        print("[detect-debug] SegFormer unavailable, skipping opening detection")
-        seg = np.zeros((height, width), dtype=np.uint8)
+            wall_union_bool = wall_union > 0
+            wall_pixels_total = int(np.count_nonzero(wall_union_bool))
+            wall_class_hits = int(np.count_nonzero((seg == ADE_WALL_CLASS) & wall_union_bool))
+            wall_fraction = (wall_class_hits / wall_pixels_total) if wall_pixels_total > 0 else 0.0
 
-    if seg.shape != (height, width):
-        seg = cv2.resize(seg, (width, height), interpolation=cv2.INTER_NEAREST)
+            if wall_fraction >= INTERIOR_SEMANTIC_MIN_WALL_FRACTION:
+                windows_raw = ((seg == ADE_WINDOW_CLASS).astype(np.uint8)) * 255
+                doors_raw = ((seg == ADE_DOOR_CLASS).astype(np.uint8)) * 255
+                windows_raw = cv2.bitwise_and(windows_raw, wall_union)
+                doors_raw = cv2.bitwise_and(doors_raw, wall_union)
+                seg_vis = np.zeros((height, width), dtype=np.uint8)
+                seg_vis[seg == ADE_WINDOW_CLASS] = 128
+                seg_vis[seg == ADE_DOOR_CLASS] = 255
 
-    # Сырые пиксельные маски (сохраняем для debug до постобработки)
-    windows_raw = ((seg == ADE_WINDOW_CLASS).astype(np.uint8)) * 255
-    doors_raw   = ((seg == ADE_DOOR_CLASS).astype(np.uint8))   * 255
+                # Часть B: уточнение плоскости стены — всё, что внутри layout-полигона
+                # стены НЕ относится к классу wall/window/door (мебель, картины, шум
+                # переразметки в углах), считаем не-стеной и вырежем из wall_minus_holes.
+                if INTERIOR_WALL_REFINE_ENABLE:
+                    non_wall = ~np.isin(seg, (ADE_WALL_CLASS, ADE_WINDOW_CLASS, ADE_DOOR_CLASS))
+                    furniture_raw = (non_wall & wall_union_bool).astype(np.uint8) * 255
+            else:
+                print(
+                    f"[detect-debug] semantic wall_fraction={wall_fraction:.3f} "
+                    f"< {INTERIOR_SEMANTIC_MIN_WALL_FRACTION}, discarding semantic mask for this frame"
+                )
+        else:
+            print("[detect-debug] Mask2Former /segformer unavailable, skipping semantic openings")
+    semantic_raw = cv2.bitwise_or(windows_raw, doors_raw)
 
-    # Ограничить проёмы плоскостью стен (убирает лестницу, пол, потолок)
-    windows_raw = cv2.bitwise_and(windows_raw, wall_union)
-    doors_raw   = cv2.bitwise_and(doors_raw,   wall_union)
+    # ── Карта нормалей поверхности (DSINE) ───────────────────────────────────
+    image_bgr = cv2.imdecode(np.frombuffer(image_bytes, np.uint8), cv2.IMREAD_COLOR)
+    normals = await asyncio.to_thread(request_normals, image_bgr) if image_bgr is not None else None
 
-    # Консолидация: OPEN → CLOSE → fill holes → area filter
-    windows_mask = _consolidate_opening_mask(windows_raw.copy(), width, height)
-    doors_mask   = _consolidate_opening_mask(doors_raw.copy(),   width, height)
+    if normals is None:
+        print("[detect-debug] DSINE normals unavailable, using semantic-only openings")
+        openings_raw = semantic_raw
+        deviation_deg = np.zeros((height, width), dtype=np.float32)
+    else:
+        if normals.shape[:2] != (height, width):
+            normals = cv2.resize(normals, (width, height), interpolation=cv2.INTER_LINEAR)
+            norms = np.linalg.norm(normals, axis=2, keepdims=True)
+            normals = normals / (norms + 1e-8)
 
-    holes_mask = cv2.bitwise_or(windows_mask, doors_mask)
+        normals_raw, deviation_deg = _detect_openings_by_normals(normals, walls, width, height)
+        normals_raw = cv2.bitwise_and(normals_raw, wall_union)
+        # Консенсус: семантика (двери/окна с рамкой) ∪ нормали (безрамочные проходы)
+        openings_raw = cv2.bitwise_or(semantic_raw, normals_raw)
+
+    # Consolidation: OPEN → CLOSE → fill holes → area filter
+    openings_mask = _consolidate_opening_mask(openings_raw.copy(), width, height)
+
+    # Часть B: консолидированная маска мебели/объектов на стене (та же морфология,
+    # чтобы отсечь точечный шум переразметки и не выедать тонкие полоски у краёв стены)
+    furniture_mask = (
+        _consolidate_opening_mask(furniture_raw.copy(), width, height)
+        if np.any(furniture_raw) else furniture_raw
+    )
+    excluded_mask = cv2.bitwise_or(openings_mask, furniture_mask)
+
     k_dilate = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-    holes_dilated = cv2.dilate(holes_mask, k_dilate, iterations=1)
+    holes_dilated = cv2.dilate(excluded_mask, k_dilate, iterations=1)
 
     wall_minus_holes = cv2.bitwise_and(wall_union, cv2.bitwise_not(holes_dilated))
 
@@ -1008,15 +1114,18 @@ async def _build_interior_wall_minus_holes(image_bytes: bytes, walls_result: dic
 
             # Стадийные PNG для диагностики
             _save("wall_union.png", wall_union)
-            _save("windows_raw.png", windows_raw)
-            _save("doors_raw.png",   doors_raw)
+            _save("openings_raw.png", openings_raw)
+            if np.any(furniture_mask):
+                _save("furniture_mask.png", furniture_mask)
             _save("holes_dilated.png", holes_dilated)
 
-            # Сырая карта SegFormer: окна=128, двери=255
-            seg_vis = np.zeros((height, width), dtype=np.uint8)
-            seg_vis[seg == ADE_WINDOW_CLASS] = 128
-            seg_vis[seg == ADE_DOOR_CLASS]   = 255
-            _save("seg_raw.png", seg_vis)
+            # Heatmap углового отклонения нормали от доминантной плоскости стены (0..90° -> 0..255)
+            normal_dev_vis = np.clip(deviation_deg / 90.0 * 255.0, 0, 255).astype(np.uint8)
+            normal_dev_vis = cv2.bitwise_and(normal_dev_vis, wall_union)
+            _save("normal_dev.png", normal_dev_vis)
+
+            if seg_vis is not None:
+                _save("seg_raw.png", seg_vis)
 
             _save("wall_minus_holes.png", wall_minus_holes)
 
@@ -1035,18 +1144,11 @@ async def _build_interior_wall_minus_holes(image_bytes: bytes, walls_result: dic
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
 
                 # Контуры консолидированных проёмов (не сырых)
-                contours_w, _ = cv2.findContours(windows_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                cv2.drawContours(overlay, contours_w, -1, (255, 0, 0), 2)
-                for c in contours_w:
+                contours_o, _ = cv2.findContours(openings_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                cv2.drawContours(overlay, contours_o, -1, (0, 0, 255), 2)
+                for c in contours_o:
                     x, y, w_, h_ = cv2.boundingRect(c)
-                    cv2.putText(overlay, "window", (x, max(0, y - 4)),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 0, 0), 1, cv2.LINE_AA)
-
-                contours_d, _ = cv2.findContours(doors_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                cv2.drawContours(overlay, contours_d, -1, (0, 0, 255), 2)
-                for c in contours_d:
-                    x, y, w_, h_ = cv2.boundingRect(c)
-                    cv2.putText(overlay, "door", (x, max(0, y - 4)),
+                    cv2.putText(overlay, "opening", (x, max(0, y - 4)),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 255), 1, cv2.LINE_AA)
 
                 _save("overlay.png", overlay)
