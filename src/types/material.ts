@@ -4,7 +4,7 @@
 
 export type MaterialId = string
 
-export type MaterialCategory = 'vagonka' | 'brus' | 'blockhouse' | 'boards' | 'planken' | 'other'
+export type MaterialCategory = 'vagonka' | 'brus' | 'blockhouse' | 'boards' | 'planken' | 'other' | 'beam'
 
 export type ColorCategory = 'wood' | 'metal' | 'wallpaper' | 'paint'
 

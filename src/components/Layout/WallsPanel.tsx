@@ -43,7 +43,7 @@ export function WallsPanel({ onStartCustomMask, isDrawingCustomMask, onCancelCus
   )
 
   return (
-    <aside className="flex w-[250px] flex-shrink-0 flex-col border-r border-gray-200 bg-white">
+    <aside className="flex flex-shrink-0 flex-col bg-white">
       <div className="border-b border-gray-100 px-4 py-3">
         <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400">Стены</h2>
       </div>

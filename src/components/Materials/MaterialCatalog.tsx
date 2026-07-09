@@ -39,7 +39,10 @@ export function MaterialCatalog({
     return () => { cancelled = true }
   }, [propMaterials, sceneMode])
 
-  const materials = propMaterials ?? apiMaterials ?? DEFAULT_MATERIALS
+  // Материалы с category='beam' — только для фальшбалок, не показываем в каталоге стен
+  const materials = (propMaterials ?? apiMaterials ?? DEFAULT_MATERIALS).filter(
+    (m) => m.category !== 'beam'
+  )
   const selectedId = selectedMaterial?.id ?? null
 
   return (

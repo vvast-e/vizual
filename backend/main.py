@@ -31,10 +31,19 @@ PROJECT_ROOT = os.environ.get(
 )
 WARP_DEBUG_DIR = os.path.join(PROJECT_ROOT, "warp-debug")
 WARP_DEBUG_SAVE = True
+DETECT_DEBUG_DIR = os.path.join(PROJECT_ROOT, "detect-debug")
+DETECT_DEBUG_SAVE = os.environ.get("DETECT_DEBUG_SAVE", "1") == "1"
+# ADE20K класс-индексы для интерьерных проёмов (SegFormer):
+ADE_WINDOW_CLASS = 8   # windowpane
+ADE_DOOR_CLASS   = 14  # door
+# Постпроцесс: размер ядра CLOSE для слияния фрагментов (0 = авто по ширине кадра)
+INTERIOR_OPENING_CLOSE_KSIZE = int(os.environ.get("INTERIOR_OPENING_CLOSE_KSIZE", "0"))
+# Постпроцесс: минимальная площадь компоненты проёма в пикселях (0 = авто)
+INTERIOR_MIN_OPENING_AREA_PX = int(os.environ.get("INTERIOR_MIN_OPENING_AREA_PX", "0"))
 TEXTURES_DIR = os.path.join(PROJECT_ROOT, "public", "textures")
 ALLOWED_TEX_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
 
-from texture_mapping import get_wall_corners, image_resize, wall_polygon_centroid
+from texture_mapping import get_wall_corners, get_ceiling_corners, image_resize, wall_polygon_centroid
 
 # Lazy imports after chdir: wall_segmentation and wall_estimation use relative paths
 segmentation_model = None
@@ -76,6 +85,18 @@ def _detect_walls_sync(image_path: str) -> dict:
             "id": i + 1,
             "corners": corners,
             "center": [round(center[0], 2), round(center[1], 2)],
+            "surface": "wall",
+        })
+
+    ceiling_pts = get_ceiling_corners(estimation_map)
+    if ceiling_pts is not None:
+        center = wall_polygon_centroid(ceiling_pts)
+        corners = [[int(p[0]), int(p[1])] for p in ceiling_pts]
+        walls.append({
+            "id": len(walls) + 1,
+            "corners": corners,
+            "center": [round(center[0], 2), round(center[1], 2)],
+            "surface": "ceiling",
         })
 
     return {
@@ -889,14 +910,46 @@ async def detect_walls(file: UploadFile = File(...)):
             pass
 
 
+def _consolidate_opening_mask(mask: np.ndarray, width: int, height: int) -> np.ndarray:
+    """Слияние фрагментов → заполнение дыр → фильтр по площади."""
+    if not np.any(mask):
+        return mask
+
+    # 1. Убрать точечный шум
+    k_open = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, k_open)
+
+    # 2. Слить близкие фрагменты в единый проём
+    close_k = INTERIOR_OPENING_CLOSE_KSIZE if INTERIOR_OPENING_CLOSE_KSIZE > 0 else max(7, width // 120)
+    close_k = close_k | 1  # нечётное
+    k_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (close_k, close_k))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, k_close)
+
+    # 3. Заполнить внутренние дыры контуров
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    filled = np.zeros_like(mask)
+    cv2.drawContours(filled, contours, -1, 255, thickness=cv2.FILLED)
+
+    # 4. Отбросить мелкие компоненты (шум от лестниц, теней и т.п.)
+    min_area = INTERIOR_MIN_OPENING_AREA_PX if INTERIOR_MIN_OPENING_AREA_PX > 0 \
+        else max(200, (width * height) // 4000)
+    n_labels, labels, stats, _ = cv2.connectedComponentsWithStats(filled, connectivity=8)
+    result = np.zeros_like(filled)
+    for lbl in range(1, n_labels):
+        if stats[lbl, cv2.CC_STAT_AREA] >= min_area:
+            result[labels == lbl] = 255
+    return result
+
+
 async def _build_interior_wall_minus_holes(image_bytes: bytes, walls_result: dict) -> dict:
-    """Detect window/door openings inside the union of detected walls and return
-    a base64 PNG mask where wall pixels remain 255 and opening pixels are 0."""
-    from exterior_pipeline import (
-        detect_openings_bboxes,
-        sam_masks_from_bboxes_batch,
-        encode_mask_png_base64,
-    )
+    """Detect window/door openings via SegFormer ADE20K semantic segmentation.
+
+    Returns a base64 PNG mask where wall pixels are 255 and opening pixels are 0.
+    Uses pixel-level class labels (windowpane=8, door=14) — no bbox hallucinations.
+    """
+    import hashlib
+    import time as _time
+    from exterior_pipeline import segment_ade20k, encode_mask_png_base64
 
     image_size = walls_result.get("image_size") or {}
     width = int(image_size.get("width") or 0)
@@ -905,30 +958,100 @@ async def _build_interior_wall_minus_holes(image_bytes: bytes, walls_result: dic
     if width <= 0 or height <= 0 or not walls:
         return {}
 
-    openings = await detect_openings_bboxes(
-        image_bytes, [0.0, 0.0, float(width), float(height)]
-    )
-    all_bboxes = list(openings.get("windows", [])) + list(openings.get("doors", []))
-
-    holes_mask = np.zeros((height, width), dtype=np.uint8)
-    if all_bboxes:
-        sam_masks = await sam_masks_from_bboxes_batch(image_bytes, all_bboxes)
-        for m in sam_masks:
-            if m is None:
-                continue
-            if m.shape != holes_mask.shape:
-                m = cv2.resize(m, (width, height), interpolation=cv2.INTER_NEAREST)
-            holes_mask = cv2.bitwise_or(holes_mask, m)
-
+    # ── Маска объединения стен (строим ДО морфологии, чтобы обрезать проёмы по стенам) ──
     wall_union = np.zeros((height, width), dtype=np.uint8)
     for wall in walls:
         pts = np.array(wall.get("corners") or [], dtype=np.int32)
         if pts.size >= 6:
             cv2.fillPoly(wall_union, [pts], color=255)
 
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
-    holes_dilated = cv2.dilate(holes_mask, kernel, iterations=1)
+    # ── Семантическая сегментация интерьера через SegFormer ADE20K ──────────
+    seg = await segment_ade20k(image_bytes)  # (H, W) uint8, значения 0-149
+
+    if seg.size == 0:
+        print("[detect-debug] SegFormer unavailable, skipping opening detection")
+        seg = np.zeros((height, width), dtype=np.uint8)
+
+    if seg.shape != (height, width):
+        seg = cv2.resize(seg, (width, height), interpolation=cv2.INTER_NEAREST)
+
+    # Сырые пиксельные маски (сохраняем для debug до постобработки)
+    windows_raw = ((seg == ADE_WINDOW_CLASS).astype(np.uint8)) * 255
+    doors_raw   = ((seg == ADE_DOOR_CLASS).astype(np.uint8))   * 255
+
+    # Ограничить проёмы плоскостью стен (убирает лестницу, пол, потолок)
+    windows_raw = cv2.bitwise_and(windows_raw, wall_union)
+    doors_raw   = cv2.bitwise_and(doors_raw,   wall_union)
+
+    # Консолидация: OPEN → CLOSE → fill holes → area filter
+    windows_mask = _consolidate_opening_mask(windows_raw.copy(), width, height)
+    doors_mask   = _consolidate_opening_mask(doors_raw.copy(),   width, height)
+
+    holes_mask = cv2.bitwise_or(windows_mask, doors_mask)
+    k_dilate = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    holes_dilated = cv2.dilate(holes_mask, k_dilate, iterations=1)
+
     wall_minus_holes = cv2.bitwise_and(wall_union, cv2.bitwise_not(holes_dilated))
+
+    # ── Debug-вывод по подпапкам (как в exterior-debug) ─────────────────────
+    if DETECT_DEBUG_SAVE:
+        try:
+            call_ts = int(_time.time() * 1000)
+            call_digest = hashlib.md5(image_bytes).hexdigest()[:10]
+            call_dir = os.path.join(DETECT_DEBUG_DIR, f"call_{call_ts}_{call_digest}")
+            os.makedirs(call_dir, exist_ok=True)
+
+            def _save(name: str, img: np.ndarray):
+                p = os.path.join(call_dir, name)
+                cv2.imwrite(p, img)
+                print(f"[detect-debug] saved: {p}")
+
+            # Стадийные PNG для диагностики
+            _save("wall_union.png", wall_union)
+            _save("windows_raw.png", windows_raw)
+            _save("doors_raw.png",   doors_raw)
+            _save("holes_dilated.png", holes_dilated)
+
+            # Сырая карта SegFormer: окна=128, двери=255
+            seg_vis = np.zeros((height, width), dtype=np.uint8)
+            seg_vis[seg == ADE_WINDOW_CLASS] = 128
+            seg_vis[seg == ADE_DOOR_CLASS]   = 255
+            _save("seg_raw.png", seg_vis)
+
+            _save("wall_minus_holes.png", wall_minus_holes)
+
+            # Overlay: стены/потолок + консолидированные контуры проёмов
+            overlay = cv2.imdecode(np.frombuffer(image_bytes, np.uint8), cv2.IMREAD_COLOR)
+            if overlay is not None:
+                for wall in walls:
+                    pts = np.array(wall.get("corners") or [], dtype=np.int32)
+                    surface = wall.get("surface", "wall")
+                    if pts.size >= 6:
+                        color = (0, 165, 255) if surface == "ceiling" else (0, 255, 0)
+                        cv2.polylines(overlay, [pts], isClosed=True, color=color, thickness=2)
+                        cx, cy = wall.get("center") or [pts[:, 0].mean(), pts[:, 1].mean()]
+                        label = "ceiling" if surface == "ceiling" else f"wall {wall.get('id', '')}"
+                        cv2.putText(overlay, label, (int(cx), int(cy)),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
+
+                # Контуры консолидированных проёмов (не сырых)
+                contours_w, _ = cv2.findContours(windows_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                cv2.drawContours(overlay, contours_w, -1, (255, 0, 0), 2)
+                for c in contours_w:
+                    x, y, w_, h_ = cv2.boundingRect(c)
+                    cv2.putText(overlay, "window", (x, max(0, y - 4)),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 0, 0), 1, cv2.LINE_AA)
+
+                contours_d, _ = cv2.findContours(doors_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                cv2.drawContours(overlay, contours_d, -1, (0, 0, 255), 2)
+                for c in contours_d:
+                    x, y, w_, h_ = cv2.boundingRect(c)
+                    cv2.putText(overlay, "door", (x, max(0, y - 4)),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 255), 1, cv2.LINE_AA)
+
+                _save("overlay.png", overlay)
+        except Exception as _dbg_err:
+            print(f"[detect-debug] save failed: {_dbg_err}")
 
     return {"wall_minus_holes": encode_mask_png_base64(wall_minus_holes)}
 

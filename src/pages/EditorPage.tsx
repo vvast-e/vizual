@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { Canvas2D } from '@/components/2d/Canvas2D'
 import { EditorHeader } from '@/components/Layout/EditorHeader'
 import { WallsPanel } from '@/components/Layout/WallsPanel'
+import { BeamPanel } from '@/components/Layout/BeamPanel'
 import { OnboardingTour } from '@/components/OnboardingTour'
 import { MaterialWidget } from '@/components/Materials/MaterialWidget'
 import { ColorWidget } from '@/components/Materials/ColorWidget'
@@ -157,11 +158,14 @@ export function EditorPage() {
       <OnboardingTour />
       <EditorHeader onRequestChangePhoto={handleChangePhoto} />
       <div className="flex flex-1 overflow-hidden">
-        <WallsPanel
-          onStartCustomMask={handleStartCustomMask}
-          isDrawingCustomMask={isDrawingCustomMask}
-          onCancelCustomMask={handleCancelCustomMask}
-        />
+        <div className="flex w-[250px] flex-shrink-0 flex-col border-r border-gray-200 bg-white overflow-y-auto">
+          <WallsPanel
+            onStartCustomMask={handleStartCustomMask}
+            isDrawingCustomMask={isDrawingCustomMask}
+            onCancelCustomMask={handleCancelCustomMask}
+          />
+          <BeamPanel />
+        </div>
         <main className="flex flex-1 flex-col overflow-hidden bg-gray-100 p-4">
           <Canvas2D
             customMaskMode={isDrawingCustomMask}

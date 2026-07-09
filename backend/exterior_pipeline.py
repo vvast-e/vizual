@@ -25,6 +25,7 @@ from vp_detection import extract_manhattan_vps, project_to_horizon, project_vert
 GDINO_URL = os.getenv("EXTERIOR_GDINO_URL", "http://127.0.0.1:8001/gdino")
 SAM_URL = os.getenv("EXTERIOR_SAM_URL", "http://127.0.0.1:8001/sam")
 SAM_BATCH_URL = os.getenv("EXTERIOR_SAM_BATCH_URL", "http://127.0.0.1:8001/sam_batch")
+SEGFORMER_URL = os.getenv("SEGFORMER_URL", "http://127.0.0.1:8001/segformer")
 TIMEOUT_S = int(os.getenv("EXTERIOR_TIMEOUT_MS", "120000")) / 1000.0
 SCORE_THRESH_BUILDING = float(os.getenv("EXTERIOR_SCORE_THRESH_BUILDING", "0.3"))
 SCORE_THRESH_OPENINGS = float(os.getenv("EXTERIOR_SCORE_THRESH_OPENINGS", "0.22"))
@@ -159,17 +160,46 @@ async def detect_building_bbox(image_bytes: bytes) -> list[float] | None:
     return [min_x, min_y, max_x, max_y]
 
 
+async def segment_ade20k(image_bytes: bytes) -> np.ndarray:
+    """Call SegFormer ADE20K service and return a (H,W) uint8 array of class indices.
+
+    ADE20K class indices used for interior openings:
+      windowpane = 8, door = 14.
+    Returns zeros array on error (caller falls back gracefully).
+    """
+    try:
+        resp = await _post_with_retry(
+            SEGFORMER_URL,
+            files={"image": ("photo.jpg", image_bytes, "image/jpeg")},
+        )
+        resp.raise_for_status()
+        arr = np.frombuffer(resp.content, dtype=np.uint8)
+        seg = cv2.imdecode(arr, cv2.IMREAD_GRAYSCALE)
+        if seg is None:
+            raise ValueError("Failed to decode SegFormer PNG response")
+        return seg
+    except Exception as exc:
+        print(f"[detect-debug] segment_ade20k failed: {exc}")
+        return np.zeros((0, 0), dtype=np.uint8)
+
+
 async def detect_openings_bboxes(
     image_bytes: bytes,
     building_bbox: list[float],
+    score_threshold: float | None = None,
 ) -> dict[str, list[list[float]]]:
-    """Call GroundingDINO to find windows/doors inside building_bbox."""
+    """Call GroundingDINO to find windows/doors inside building_bbox.
+
+    score_threshold: if None, uses the global SCORE_THRESH_OPENINGS (exterior default).
+    Pass a higher value for interior to reduce false positives.
+    """
+    thresh = score_threshold if score_threshold is not None else SCORE_THRESH_OPENINGS
     resp = await _post_with_retry(
         GDINO_URL,
         files={"image": ("photo.jpg", image_bytes, "image/jpeg")},
         data={
             "prompt": "window . door",
-            "score_threshold": str(SCORE_THRESH_OPENINGS),
+            "score_threshold": str(thresh),
         },
     )
     resp.raise_for_status()

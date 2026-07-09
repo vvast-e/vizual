@@ -180,20 +180,119 @@ function drawTexturedTriangle(
 
 
 /**
+ * Базовый размер тайла текстуры в пикселях при scale=1.0.
+ * При дефолтном scale=0.25 тайл ~150px — визуально мелкий и корректный.
+ */
+const BASE_TILE_PX = 600
+
+/**
+ * Строит тайлованный паттерн-canvas нужного размера с учётом масштаба.
+ * Один тайл = BASE_TILE_PX * textureScale пикселей (по большей стороне),
+ * затем повторяется на destW×destH.
+ */
+function buildTiledSource(
+  img: HTMLImageElement,
+  destW: number,
+  destH: number,
+  textureScale: number,
+): HTMLCanvasElement {
+  const scale = Math.max(0.02, Math.min(2, textureScale))
+  const tileW = Math.max(1, Math.round(BASE_TILE_PX * scale))
+  const tileH = Math.max(1, Math.round(tileW * (img.naturalHeight / Math.max(1, img.naturalWidth))))
+
+  // Промежуточный холст одного тайла
+  const tileCanvas = document.createElement('canvas')
+  tileCanvas.width = tileW
+  tileCanvas.height = tileH
+  const tc = tileCanvas.getContext('2d')
+  if (tc) tc.drawImage(img, 0, 0, tileW, tileH)
+
+  // Финальный холст с повтором тайла
+  const dst = document.createElement('canvas')
+  dst.width = Math.max(1, destW)
+  dst.height = Math.max(1, destH)
+  const dc = dst.getContext('2d')
+  if (dc) {
+    const pat = dc.createPattern(tileCanvas, 'repeat')
+    if (pat) {
+      dc.fillStyle = pat
+      dc.fillRect(0, 0, dst.width, dst.height)
+    }
+  }
+  return dst
+}
+
+/**
+ * Строит источник текстуры для балки: одна доска, растянутая поперёк,
+ * повторяется вдоль длины как продольные сегменты (волокно по длине балки).
+ * Устраняет эффект «реек/жалюзи», который возникает при квадратном тайлинге.
+ *
+ * Ориентация: если destW >= destH — балка горизонтальная (along = W),
+ * иначе — вертикальная (along = H). Картинка поворачивается 90° для вертикальных балок.
+ */
+function buildBeamSource(
+  img: HTMLImageElement,
+  destW: number,
+  destH: number,
+  textureScale: number,
+): HTMLCanvasElement {
+  const dst = document.createElement('canvas')
+  dst.width = Math.max(1, destW)
+  dst.height = Math.max(1, destH)
+  const dc = dst.getContext('2d')
+  if (!dc) return dst
+
+  const isHorizontal = destW >= destH
+  const along = isHorizontal ? destW : destH   // длина балки
+  const across = isHorizontal ? destH : destW  // ширина балки
+
+  const scale = Math.max(0.05, Math.min(4, textureScale))
+  // Длина одного сегмента вдоль балки (≈ квадратные сегменты, масштабируемые ползунком)
+  const segLen = Math.max(1, Math.round(across * 4 * scale))
+  const numSegs = Math.max(1, Math.round(along / segLen))
+  const actualSegLen = along / numSegs
+
+  for (let i = 0; i < numSegs; i++) {
+    const segStart = i * actualSegLen
+
+    if (isHorizontal) {
+      // Горизонтальная балка: каждый сегмент — вертикальная полоска,
+      // картинка рисуется «в ширину» поперёк балки (растянута на across = destH)
+      // и повторяется по длине
+      dc.drawImage(img, segStart, 0, actualSegLen, across)
+    } else {
+      // Вертикальная балка: каждый сегмент — горизонтальная полоска,
+      // картинка рисуется повёрнуто (растянута на across = destW)
+      dc.save()
+      dc.translate(across, segStart)
+      dc.rotate(Math.PI / 2)
+      dc.drawImage(img, 0, 0, actualSegLen, across)
+      dc.restore()
+    }
+  }
+
+  return dst
+}
+
+/**
  * Рендерит текстуру на четырёхугольник стены с учётом перспективы
  * через разбиение на 2 треугольника (drawTexturedTriangle).
  *
  * @param corners — 4 угла стены в координатах канваса, порядок: [TL, BL, BR, TR]
  * @param polygon — опциональный многоугольник стены (для обрезки)
+ * @param fullCanvasSize — если задан, рисует в полноразмерный холст (wallImageSize) вместо bbox.
+ *   Позволяет класть слой через bgTx как экстерьерный PNG — без clipPath и ручной арифметики координат.
  */
 export async function renderPerspectiveWallTexture(
   textureUrl: string,
   corners: [number, number][],
   canvasWidth: number,
   canvasHeight: number,
-  _textureScale: number = 0.25,
+  textureScale: number = 0.25,
   polygon?: [number, number][],
-  maskImage?: HTMLImageElement | null
+  maskImage?: HTMLImageElement | null,
+  fullCanvasSize?: { width: number; height: number } | null,
+  sourceMode: 'tile' | 'beam' = 'tile'
 ): Promise<{
   canvas: HTMLCanvasElement
   offsetX: number
@@ -219,7 +318,80 @@ export async function renderPerspectiveWallTexture(
   const bboxW = Math.max(1, Math.ceil(maxX - minX))
   const bboxH = Math.max(1, Math.ceil(maxY - minY))
 
-  const srcCanvas = createPatternCanvas(img, 'repeat', bboxW, bboxH)
+  // Флаг отладочного логирования (только в dev-режиме)
+  const DEBUG_INTERIOR = (import.meta.env?.DEV ?? false) || (typeof localStorage !== 'undefined' && localStorage.getItem('vizual-debug') === '1')
+
+  // Режим full-canvas: рисуем в полноразмерный холст (wallImageSize) по абсолютным координатам.
+  // Слой затем кладётся через bgTx (как экстерьерный PNG) — без clipPath.
+  if (fullCanvasSize && fullCanvasSize.width > 0 && fullCanvasSize.height > 0) {
+    const fullW = fullCanvasSize.width
+    const fullH = fullCanvasSize.height
+
+    // Паттерн с учётом textureScale — тайл масштабирован, затем повторён на bbox
+    const srcCanvas = buildTiledSource(img, bboxW, bboxH, textureScale)
+    const offscreen = document.createElement('canvas')
+    offscreen.width = fullW
+    offscreen.height = fullH
+    const ctx = offscreen.getContext('2d')
+    if (!ctx) {
+      return { canvas: offscreen, offsetX: 0, offsetY: 0, localCorners: corners, localPolygon: polygon }
+    }
+    ctx.clearRect(0, 0, fullW, fullH)
+
+    // Если есть polygon — ограничиваем клипом для точного контура (внутри самого canvas)
+    const clipPts = polygon && polygon.length >= 3 ? polygon : corners
+    if (DEBUG_INTERIOR) {
+      console.log('[interior-wall] render full-canvas', {
+        bboxW, bboxH, fullW, fullH,
+        clipPtsCount: clipPts.length,
+        sourceMode,
+        hasMask: !!(maskImage && maskImage.width > 0),
+        textureScale,
+      })
+    }
+    ctx.save()
+    ctx.beginPath()
+    clipPts.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)))
+    ctx.closePath()
+    ctx.clip()
+
+    // Рисуем quad: [TL, BL, BR, TR] — абсолютные координаты corners
+    const [tl, bl, br, tr] = corners
+    // Triangle 1: TL-BL-BR
+    drawTexturedTriangle(
+      ctx, srcCanvas,
+      0, 0,   0, bboxH,   bboxW, bboxH,
+      tl[0], tl[1],  bl[0], bl[1],  br[0], br[1]
+    )
+    // Triangle 2: TL-BR-TR
+    drawTexturedTriangle(
+      ctx, srcCanvas,
+      0, 0,   bboxW, bboxH,   bboxW, 0,
+      tl[0], tl[1],  br[0], br[1],  tr[0], tr[1]
+    )
+    ctx.restore()
+
+    // Маска окон/дверей: вырезаем прозрачные области
+    if (maskImage && maskImage.width > 0 && maskImage.height > 0) {
+      const prevOp = ctx.globalCompositeOperation
+      ctx.globalCompositeOperation = 'destination-in'
+      ctx.drawImage(maskImage, 0, 0, fullW, fullH)
+      ctx.globalCompositeOperation = prevOp
+    }
+
+    return {
+      canvas: offscreen,
+      offsetX: 0,
+      offsetY: 0,
+      localCorners: corners,
+      localPolygon: polygon,
+    }
+  }
+
+  // Режим bbox (для балок и обратной совместимости)
+  const srcCanvas = sourceMode === 'beam'
+    ? buildBeamSource(img, bboxW, bboxH, textureScale)
+    : buildTiledSource(img, bboxW, bboxH, textureScale)
   const localCorners = corners.map(([x, y]) => [x - minX, y - minY] as [number, number])
   const localPolygon = (polygon && polygon.length >= 3
     ? polygon
@@ -234,35 +406,61 @@ export async function renderPerspectiveWallTexture(
     return { canvas: offscreen, offsetX: minX, offsetY: minY, localCorners, localPolygon }
   }
 
-  // Рисуем перспективу: разбиваем quad на 2 треугольника.
-  // Ожидаемый порядок углов: [TL, BL, BR, TR]
+  // Рисуем перспективу: порядок углов [TL, BL, BR, TR]
   const [tl, bl, br, tr] = localCorners
 
   ctx.clearRect(0, 0, bboxW, bboxH)
 
-  // Triangle 1: TL-BL-BR
-  drawTexturedTriangle(
-    ctx,
-    srcCanvas,
-    0, 0,
-    0, bboxH,
-    bboxW, bboxH,
-    tl[0], tl[1],
-    bl[0], bl[1],
-    br[0], br[1]
-  )
-
-  // Triangle 2: TL-BR-TR
-  drawTexturedTriangle(
-    ctx,
-    srcCanvas,
-    0, 0,
-    bboxW, bboxH,
-    bboxW, 0,
-    tl[0], tl[1],
-    br[0], br[1],
-    tr[0], tr[1]
-  )
+  if (sourceMode === 'beam') {
+    // Субдивизия балки на K срезов вдоль длинной оси для уменьшения аффинного перекоса.
+    // Кусочно-аффинная аппроксимация резко снижает диагональный артефакт.
+    const K = 12
+    if (bboxW >= bboxH) {
+      // Горизонтальная балка: разрезаем вдоль X (TL→TR и BL→BR)
+      for (let i = 0; i < K; i++) {
+        const t0 = i / K
+        const t1 = (i + 1) / K
+        const sTL: [number, number] = [tl[0] + (tr[0] - tl[0]) * t0, tl[1] + (tr[1] - tl[1]) * t0]
+        const sTR: [number, number] = [tl[0] + (tr[0] - tl[0]) * t1, tl[1] + (tr[1] - tl[1]) * t1]
+        const sBL: [number, number] = [bl[0] + (br[0] - bl[0]) * t0, bl[1] + (br[1] - bl[1]) * t0]
+        const sBR: [number, number] = [bl[0] + (br[0] - bl[0]) * t1, bl[1] + (br[1] - bl[1]) * t1]
+        // Источник: горизонтальный срез [t0·W … t1·W] × [0 … H]
+        drawTexturedTriangle(ctx, srcCanvas,
+          t0 * bboxW, 0,    t0 * bboxW, bboxH,    t1 * bboxW, bboxH,
+          sTL[0], sTL[1],   sBL[0], sBL[1],        sBR[0], sBR[1])
+        drawTexturedTriangle(ctx, srcCanvas,
+          t0 * bboxW, 0,    t1 * bboxW, bboxH,    t1 * bboxW, 0,
+          sTL[0], sTL[1],   sBR[0], sBR[1],        sTR[0], sTR[1])
+      }
+    } else {
+      // Вертикальная балка: разрезаем вдоль Y (TL→BL и TR→BR)
+      for (let i = 0; i < K; i++) {
+        const t0 = i / K
+        const t1 = (i + 1) / K
+        const sTL: [number, number] = [tl[0] + (bl[0] - tl[0]) * t0, tl[1] + (bl[1] - tl[1]) * t0]
+        const sBL: [number, number] = [tl[0] + (bl[0] - tl[0]) * t1, tl[1] + (bl[1] - tl[1]) * t1]
+        const sTR: [number, number] = [tr[0] + (br[0] - tr[0]) * t0, tr[1] + (br[1] - tr[1]) * t0]
+        const sBR: [number, number] = [tr[0] + (br[0] - tr[0]) * t1, tr[1] + (br[1] - tr[1]) * t1]
+        // Источник: вертикальный срез [0 … W] × [t0·H … t1·H]
+        drawTexturedTriangle(ctx, srcCanvas,
+          0, t0 * bboxH,    0, t1 * bboxH,    bboxW, t1 * bboxH,
+          sTL[0], sTL[1],   sBL[0], sBL[1],   sBR[0], sBR[1])
+        drawTexturedTriangle(ctx, srcCanvas,
+          0, t0 * bboxH,    bboxW, t1 * bboxH,    bboxW, t0 * bboxH,
+          sTL[0], sTL[1],   sBR[0], sBR[1],       sTR[0], sTR[1])
+      }
+    }
+  } else {
+    // Стены/тайл: стандартные 2 треугольника (полный quad)
+    // Triangle 1: TL-BL-BR
+    drawTexturedTriangle(ctx, srcCanvas,
+      0, 0,     0, bboxH,    bboxW, bboxH,
+      tl[0], tl[1],  bl[0], bl[1],  br[0], br[1])
+    // Triangle 2: TL-BR-TR
+    drawTexturedTriangle(ctx, srcCanvas,
+      0, 0,     bboxW, bboxH,    bboxW, 0,
+      tl[0], tl[1],  br[0], br[1],  tr[0], tr[1])
+  }
 
   // Mask: carve openings (windows/doors) out of the rendered texture.
   // The mask is expected in the same coordinate system as `corners` (wallImageSize),

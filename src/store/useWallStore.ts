@@ -15,6 +15,8 @@ export interface WallData {
   /** Двухучастковый варп (стена + фронтон). Сбрасывается при ручном движении углов. */
   regions?: WallWarpRegion[]
   center: [number, number]
+  /** Тип поверхности; отсутствие поля = стена */
+  surface?: 'wall' | 'ceiling'
 }
 
 export interface WallImageSize {

@@ -118,6 +118,46 @@ def _get_angle(a: tuple, b: tuple, c: tuple) -> float:
     return ang + 360 if ang < 0 else ang
 
 
+def get_ceiling_corners(image: np.ndarray) -> list[tuple[int, int]] | None:
+    """Extract ceiling quad [TL, BL, BR, TR] from estimation map (white pixels = ceiling).
+
+    Returns None if ceiling region is absent or too small.
+    """
+    # estimation map arrives as BGR from cv2; ceiling = white (255,255,255) in any channel order
+    rgb = image[..., ::-1]
+    mask = np.all(rgb == (255, 255, 255), axis=-1).astype(np.uint8)
+    if not mask.any():
+        return None
+
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return None
+
+    contour = max(contours, key=cv2.contourArea)
+    area = cv2.contourArea(contour)
+    image_area = image.shape[0] * image.shape[1]
+    if area < image_area / 20:
+        return None
+
+    perimeter = cv2.arcLength(contour, True)
+    approx = cv2.approxPolyDP(contour, 0.02 * perimeter, True)
+    pts = np.array([p[0] for p in approx], dtype=np.float32)
+
+    # Need exactly 4 corners; use bounding-box corners if approximation gives more/fewer
+    if len(pts) != 4:
+        x, y, w, h = cv2.boundingRect(contour)
+        pts = np.array([[x, y], [x, y + h], [x + w, y + h], [x + w, y]], dtype=np.float32)
+
+    # Order as [TL, BL, BR, TR] — matches renderPerspectiveWallTexture expectations
+    cx, cy = pts.mean(axis=0)
+    tl = pts[np.argmin(pts[:, 0] + pts[:, 1])]
+    br = pts[np.argmax(pts[:, 0] + pts[:, 1])]
+    bl = pts[np.argmax(-pts[:, 0] + pts[:, 1])]
+    tr = pts[np.argmax(pts[:, 0] - pts[:, 1])]
+    ordered = [tuple(map(int, p)) for p in (tl, bl, br, tr)]
+    return ordered
+
+
 def wall_polygon_centroid(points: list[tuple[int, int]]) -> tuple[float, float]:
     """Centroid of a polygon (for button placement)."""
     n = len(points)

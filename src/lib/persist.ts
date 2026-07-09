@@ -3,6 +3,7 @@ import { useVisualizerStore } from '@/store/useVisualizerStore'
 import { useUIStore } from '@/store/useUIStore'
 import { useMaterialStore } from '@/store/useMaterialStore'
 import { useHistoryStore } from '@/store/useHistoryStore'
+import { useBeamStore } from '@/store/useBeamStore'
 
 const STORAGE_KEY = 'vizual-state'
 
@@ -14,6 +15,12 @@ interface PersistedState {
   exteriorMaskBase64: string | null
   interiorMaskBase64: string | null
   sceneMode: ReturnType<typeof useUIStore.getState>['sceneMode']
+  beams?: ReturnType<typeof useBeamStore.getState>['beams']
+  beamEnabled?: boolean
+  beamCount?: number
+  beamHalfWidth?: number
+  beamDirection?: ReturnType<typeof useBeamStore.getState>['direction']
+  beamTextureUrl?: string | null
 }
 
 export function saveState() {
@@ -21,6 +28,7 @@ export function saveState() {
     const wallState = useWallStore.getState()
     const visualState = useVisualizerStore.getState()
     const uiState = useUIStore.getState()
+    const beamState = useBeamStore.getState()
 
     const state: PersistedState = {
       photoDataUrl: visualState.photoDataUrl,
@@ -30,6 +38,12 @@ export function saveState() {
       exteriorMaskBase64: wallState.exteriorMaskBase64,
       interiorMaskBase64: wallState.interiorMaskBase64,
       sceneMode: uiState.sceneMode,
+      beams: beamState.beams,
+      beamEnabled: beamState.enabled,
+      beamCount: beamState.count,
+      beamHalfWidth: beamState.halfWidth,
+      beamDirection: beamState.direction,
+      beamTextureUrl: beamState.textureUrl,
     }
 
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
@@ -74,6 +88,15 @@ export function loadState(): boolean {
       if (state.interiorMaskBase64) {
         useWallStore.getState().setInteriorMaskBase64(state.interiorMaskBase64)
       }
+
+      const beam = useBeamStore.getState()
+      if (state.beams) beam.clear()
+      if (state.beamEnabled != null) beam.setEnabled(state.beamEnabled)
+      if (state.beamCount != null) beam.setCount(state.beamCount)
+      if (state.beamHalfWidth != null) beam.setHalfWidth(state.beamHalfWidth)
+      if (state.beamDirection) beam.setDirection(state.beamDirection)
+      if (state.beamTextureUrl !== undefined) beam.setTextureUrl(state.beamTextureUrl ?? null)
+      if (state.beams) state.beams.forEach((b) => beam.addBeam(b))
     } finally {
       history.setApplying(false)
       history.clear()
@@ -94,6 +117,8 @@ export function clearState() {
     useWallStore.getState().setWalls([], null)
     useWallStore.getState().setExteriorMaskBase64(null)
     useWallStore.getState().setInteriorMaskBase64(null)
+    useBeamStore.getState().clear()
+    useBeamStore.getState().setEnabled(false)
   } finally {
     history.setApplying(false)
     history.clear()
@@ -112,4 +137,5 @@ export function initPersistence() {
   }
   useWallStore.subscribe(saveState)
   useVisualizerStore.subscribe(saveState)
+  useBeamStore.subscribe(saveState)
 }

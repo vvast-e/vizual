@@ -4,9 +4,12 @@ import { useVisualizerStore } from '@/store/useVisualizerStore'
 import { useMaterialStore } from '@/store/useMaterialStore'
 import { useUIStore } from '@/store/useUIStore'
 import { useWallStore } from '@/store/useWallStore'
+import { useBeamStore } from '@/store/useBeamStore'
 import { useColorize } from '@/hooks/useColorize'
 import { useHistoryStore } from '@/store/useHistoryStore'
 import { toast } from 'sonner'
+import { Point, type FabricImage } from 'fabric'
+import { renderBeam, clearBeamLayers } from '@/lib/beam-renderer'
 
 function LayersIcon() {
   return (
@@ -102,6 +105,11 @@ export function Canvas2D({
   const exteriorSplitLineActive = useUIStore((s) => s.exteriorSplitLineActive)
   const setExteriorSplitLineActive = useUIStore((s) => s.setExteriorSplitLineActive)
 
+  const beams = useBeamStore((s) => s.beams)
+  const beamEnabled = useBeamStore((s) => s.enabled)
+  const beamTextureUrl = useBeamStore((s) => s.textureUrl)
+  const beamLayersRef = useRef<Record<number, FabricImage[]>>({})
+
   const { selectedColor, colorizeOpacity, getColorizedTextureUrl } = useColorize()
   const { undo, redo, canUndo, canRedo } = useHistoryStore()
 
@@ -168,6 +176,7 @@ export function Canvas2D({
     canUndoCustomMask,
     canRedoCustomMask,
     hasWallTexture,
+    getBackgroundBounds,
   } = useCanvas2D({
     canvasRef,
     containerWidth: canvasSize.width,
@@ -326,8 +335,99 @@ export function Canvas2D({
     })
   }, [wallTextures, isReady, wallImageSize, walls, clearTextureFromWall, applyTextureToWall, hasWallTexture])
 
+  // Клик по балке → удалить балку
+  useEffect(() => {
+    if (!isReady) return
+    const canvas = canvasInstanceRef.current
+    if (!canvas) return
+
+    const handler = (opt: { e: Event }) => {
+      if (!beamEnabled) return
+      const scenePoint = canvas.getScenePoint(opt.e as MouseEvent)
+      const point = new Point(scenePoint.x, scenePoint.y)
+      for (const [idStr, objs] of Object.entries(beamLayersRef.current)) {
+        for (const obj of objs) {
+          if (
+            typeof (obj as unknown as { containsPoint?: (p: unknown) => boolean }).containsPoint === 'function' &&
+            (obj as unknown as { containsPoint: (p: unknown) => boolean }).containsPoint(point)
+          ) {
+            useBeamStore.getState().removeBeam(Number(idStr))
+            return
+          }
+        }
+      }
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    canvas.on('mouse:down', handler as any)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return () => { canvas.off('mouse:down', handler as any) }
+  }, [isReady, beamEnabled, canvasInstanceRef])
+
+  // Рендер фальшбалок
+  useEffect(() => {
+    if (!isReady || !isPhotoLoaded || !wallImageSize) return
+    const canvas = canvasInstanceRef.current
+    if (!canvas) return
+
+    // Очистить старые слои
+    clearBeamLayers(canvas, beamLayersRef)
+
+    if (!beamEnabled || beams.length === 0) {
+      canvas.requestRenderAll()
+      return
+    }
+
+    const bounds = getBackgroundBounds()
+    if (!bounds) return
+
+    const scaleX = bounds.width / wallImageSize.width
+    const scaleY = bounds.height / wallImageSize.height
+    const cw = canvas.getWidth()
+    const ch = canvas.getHeight()
+
+    const textureUrl = beamTextureUrl ?? null
+
+    if (!textureUrl) return
+
+    void (async () => {
+      for (const beam of beams) {
+        try {
+          const { objects, beamId } = await renderBeam(
+            beam, textureUrl, cw, ch, scaleX, scaleY, bounds.left, bounds.top,
+          )
+          beamLayersRef.current[beamId] = objects
+          objects.forEach((o) => canvas.add(o))
+        } catch {
+          // ignore render errors for individual beams
+        }
+      }
+      canvas.requestRenderAll()
+    })()
+  }, [isReady, isPhotoLoaded, beams, beamEnabled, beamTextureUrl, wallImageSize, getBackgroundBounds, canvasInstanceRef])
+
   const handleApplyTexture = useCallback(async () => {
     try {
+      if (sceneMode === 'interior' && walls.length > 0 && wallImageSize) {
+        if (selectedWallId == null) {
+          toast.warning('Выберите стену или потолок')
+          return
+        }
+        const wall = walls.find((w) => w.id === selectedWallId)
+        if (!wall || wall.corners.length < 3) return
+        const rawUrl = selectedMaterial?.texture.url || useWallStore.getState().wallRawTextures[selectedWallId]
+        if (!rawUrl) return
+        const url = await getTextureUrl(rawUrl)
+        setWallTexture(selectedWallId, url, rawUrl)
+        try {
+          await applyTextureToWall(url, wall.corners, wallImageSize, selectedWallId)
+        } catch (e) {
+          setWallTexture(selectedWallId, null)
+          throw e
+        }
+        toast.success('Профиль применён')
+        return
+      }
       if (sceneMode === 'exterior' && walls.length > 0 && wallImageSize) {
         if (facadeMergeActive) {
           const profiledIds = walls

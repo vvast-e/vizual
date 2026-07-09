@@ -36,6 +36,8 @@ gdino_processor = None
 sam_model = None
 sam_processor = None
 dsine_model = None   # DSINE_v02 instance (на CPU/DEVICE)
+segformer_model = None
+segformer_processor = None
 
 
 def _load_dsine():
@@ -100,9 +102,11 @@ def _load_dsine():
 
 def _load_all_models():
     global gdino_model, gdino_processor, sam_model, sam_processor, dsine_model
+    global segformer_model, segformer_processor
 
     from transformers import AutoModelForZeroShotObjectDetection, AutoProcessor
     from transformers import SamModel, SamProcessor
+    from transformers import Mask2FormerForUniversalSegmentation, AutoImageProcessor
 
     # GroundingDINO-tiny
     gdino_id = "IDEA-Research/grounding-dino-tiny"
@@ -123,6 +127,19 @@ def _load_all_models():
     # DSINE — нормали поверхности для деления фасада на планарные грани.
     print("[model_service] Loading DSINE surface normals model...")
     dsine_model = _load_dsine()
+
+    # Mask2Former ADE20K — семантическая сегментация интерьера (окна/двери/стены...).
+    # env SEMANTIC_MODEL позволяет откатиться на меньшую модель:
+    #   facebook/mask2former-swin-base-ade-semantic  (~230MB, ~2с CPU)
+    #   facebook/mask2former-swin-tiny-ade-semantic  (~100MB, ~1с CPU)
+    #   nvidia/segformer-b2-finetuned-ade-512-512    (~100MB, прежняя)
+    seg_id = os.getenv("SEMANTIC_MODEL", "facebook/mask2former-swin-large-ade-semantic")
+    print(f"[model_service] Loading semantic segmentation model from {seg_id}...")
+    segformer_processor = AutoImageProcessor.from_pretrained(seg_id)
+    segformer_model = Mask2FormerForUniversalSegmentation.from_pretrained(seg_id).to(DEVICE)
+    segformer_model.eval()
+    n_params = sum(p.numel() for p in segformer_model.parameters()) // 1_000_000
+    print(f"[model_service] Semantic model loaded ({n_params}M params).")
 
 
 @asynccontextmanager
@@ -177,6 +194,35 @@ async def grounding_dino_detect(
         })
 
     return {"bboxes": bboxes}
+
+
+@app.post("/segformer")
+async def segformer_segment(image: UploadFile = File(...)):
+    """Run Mask2Former (ADE20K semantic) on the image and return a grayscale PNG
+    where each pixel value is the ADE20K class index (0-149, uint8).
+    Notable classes: wall=0, floor=3, ceiling=5, windowpane=8, door=14.
+    Drop-in replacement for the old SegFormer endpoint — same output contract.
+    """
+    if segformer_model is None or segformer_processor is None:
+        raise HTTPException(503, "Semantic segmentation model not loaded yet")
+
+    image_bytes = await image.read()
+    pil_image = _read_image_pil(image_bytes)
+
+    inputs = segformer_processor(images=pil_image, return_tensors="pt").to(DEVICE)
+    with torch.no_grad():
+        outputs = segformer_model(**inputs)
+
+    # post_process_semantic_segmentation upsamples to original size and returns argmax per pixel
+    seg_tensor = segformer_processor.post_process_semantic_segmentation(
+        outputs, target_sizes=[pil_image.size[::-1]]  # [(H, W)]
+    )[0]  # (H, W) int64 tensor
+    seg = seg_tensor.byte().cpu().numpy()  # (H, W) uint8, values 0-149
+
+    ok, buf = cv2.imencode(".png", seg)
+    if not ok:
+        raise HTTPException(500, "Failed to encode segmentation map")
+    return Response(content=buf.tobytes(), media_type="image/png")
 
 
 @app.post("/sam")

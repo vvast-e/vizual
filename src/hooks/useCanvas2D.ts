@@ -76,14 +76,43 @@ export function useCanvas2D({
     }
     const cached = interiorMaskImageRef.current
     if (cached && cached.b64 === b64) return cached.img
-    const img = new Image()
-    img.src = b64.startsWith('data:') ? b64 : `data:image/png;base64,${b64}`
+
+    // 1. Декодируем исходный grayscale PNG (255=стена, 0=проём)
+    const rawImg = new Image()
+    rawImg.src = b64.startsWith('data:') ? b64 : `data:image/png;base64,${b64}`
     await new Promise<void>((resolve, reject) => {
-      img.onload = () => resolve()
-      img.onerror = () => reject(new Error('Failed to decode interior mask'))
+      rawImg.onload = () => resolve()
+      rawImg.onerror = () => reject(new Error('Failed to decode interior mask'))
     })
-    interiorMaskImageRef.current = { b64, img }
-    return img
+
+    // 2. Конвертируем яркость → альфу (grayscale PNG не имеет альфа-канала,
+    //    поэтому destination-in не вырезает проёмы). Строим RGBA-canvas:
+    //    стена (R=255) → alpha=255; проём (R=0) → alpha=0; RGB=белый.
+    const cvs = document.createElement('canvas')
+    cvs.width = rawImg.naturalWidth
+    cvs.height = rawImg.naturalHeight
+    const ctx = cvs.getContext('2d')
+    if (ctx) {
+      ctx.drawImage(rawImg, 0, 0)
+      const idata = ctx.getImageData(0, 0, cvs.width, cvs.height)
+      const d = idata.data
+      for (let i = 0; i < d.length; i += 4) {
+        const luma = d[i] // grayscale: R=G=B=luma
+        d[i]     = 255    // R — белый
+        d[i + 1] = 255    // G
+        d[i + 2] = 255    // B
+        d[i + 3] = luma   // A — стена непрозрачна, проём прозрачен
+      }
+      ctx.putImageData(idata, 0, 0)
+    }
+
+    // 3. Возвращаем RGBA-Image для destination-in
+    const alphaImg = new Image()
+    alphaImg.src = cvs.toDataURL()
+    await new Promise<void>((resolve) => { alphaImg.onload = () => resolve() })
+
+    interiorMaskImageRef.current = { b64, img: alphaImg }
+    return alphaImg
   }, [])
 
   const customMaskModeRef = useRef(customMaskMode)
@@ -837,6 +866,7 @@ export function useCanvas2D({
         const overlayPoly =
           wall.polygon && wall.polygon.length >= 3 ? wall.polygon : wall.corners
         if (!hideWallMasks && isVisible && overlayPoly.length >= 3) {
+          const isCeiling = wall.surface === 'ceiling'
           const d =
             overlayPoly
               .map((c, i) => {
@@ -846,8 +876,8 @@ export function useCanvas2D({
               })
               .join(' ') + ' Z'
           const shape = new Path(d, {
-            fill: 'transparent',
-            stroke: 'rgba(37,99,235,0.8)',
+            fill: isCeiling ? 'rgba(245,158,11,0.08)' : 'transparent',
+            stroke: isCeiling ? 'rgba(245,158,11,0.9)' : 'rgba(37,99,235,0.8)',
             strokeWidth: 2,
             selectable: false,
             evented: false,
@@ -863,14 +893,15 @@ export function useCanvas2D({
         const centerIy = polyForCenter.reduce((acc, c) => acc + c[1], 0) / polyForCenter.length
         const cx = bounds.left + centerIx * scaleX
         const cy = bounds.top + centerIy * scaleY
+        const isCeilingBtn = wall.surface === 'ceiling'
         const btn = new Rect({
-          width: 36,
+          width: isCeilingBtn ? 52 : 36,
           height: 22,
-          left: cx - 18,
+          left: cx - (isCeilingBtn ? 26 : 18),
           top: cy - 11,
           fill: 'white',
-          stroke: '#333',
-          strokeWidth: 1,
+          stroke: isCeilingBtn ? '#d97706' : '#333',
+          strokeWidth: isCeilingBtn ? 2 : 1,
           rx: 11,
           ry: 11,
           originX: 'left',
@@ -950,7 +981,8 @@ export function useCanvas2D({
       textureUrl: string,
       wallCorners: [number, number][],
       _wallImageSize: { width: number; height: number } | null,
-      selectedWallId: number | null
+      selectedWallId: number | null,
+      scaleOverride?: number
     ) => {
       const canvas = canvasInstanceRef.current
       if (!canvas) {
@@ -1031,19 +1063,43 @@ export function useCanvas2D({
 
       const width = canvas.getWidth() ?? containerWidth
       const height = canvas.getHeight() ?? containerHeight
+
+      const bgTx = getBackgroundTransform()
+      if (!bgTx) return
+
       const maskImage =
-        sceneMode === 'interior'
+        sceneMode === 'interior' && wall?.surface !== 'ceiling'
           ? await loadInteriorMaskImage().catch(() => null)
           : null
-      const { canvas: textureCanvas, offsetX, offsetY, localCorners, localPolygon } = await renderPerspectiveWallTexture(
+
+      const _debugInterior = (import.meta.env?.DEV ?? false) || (typeof localStorage !== 'undefined' && localStorage.getItem('vizual-debug') === '1')
+      if (_debugInterior) {
+        console.groupCollapsed('[interior-wall] apply', selectedWallId)
+        console.log('sceneMode', sceneMode)
+        console.log('wallId', selectedWallId, '| surface', wall?.surface)
+        console.log('wallCorners', wallCorners)
+        console.log('wallPolygon pts', wallPolygon?.length ?? 0)
+        console.log('_wallImageSize', _wallImageSize)
+        console.log('bgTx', { left: bgTx.left, top: bgTx.top, scaleX: bgTx.scaleX, scaleY: bgTx.scaleY, angle: bgTx.angle })
+        console.log('maskImage', maskImage ? `${maskImage.width}×${maskImage.height}` : 'none')
+        console.groupEnd()
+      }
+
+      // Рендерим в полноразмерный холст (wallImageSize) — как экстерьерный PNG.
+      // Слой ложится через bgTx один-в-один поверх фона, без clipPath и без ручного offset.
+      const { canvas: textureCanvas } = await renderPerspectiveWallTexture(
         textureUrl,
         wallCorners,
         width,
         height,
-        textureScale,
+        scaleOverride ?? textureScale,  // scaleOverride для мгновенного ре-рендера по слайдеру
         wallPolygon,
-        maskImage
+        maskImage,
+        _wallImageSize   // fullCanvasSize — ключевой параметр Fix 4
       )
+      if (_debugInterior) {
+        console.log('[interior-wall] textureCanvas', textureCanvas.width, '×', textureCanvas.height)
+      }
       // Если пока шёл await успел запуститься новый вызов или undo снял текстуру — не добавляем слой
       if (pendingTextureRequestRef.current[layerKey] !== requestId) return
       if (selectedWallId != null && useWallStore.getState().wallTextures[selectedWallId] == null) return
@@ -1052,28 +1108,31 @@ export function useCanvas2D({
       img.src = textureCanvas.toDataURL()
       await new Promise((resolve) => { img.onload = resolve })
       if (pendingTextureRequestRef.current[layerKey] !== requestId) return
+
+      // Размещаем слой так же, как экстерьерный PNG: через трансформ фона (bgTx).
+      // FabricImage размером wallImageSize масштабируется bgTx.scaleX/Y → экран.
       const fabricImg = new FabricImage(img, {
-        left: offsetX,
-        top: offsetY,
+        left: bgTx.left,
+        top: bgTx.top,
+        originX: bgTx.originX,
+        originY: bgTx.originY,
+        scaleX: bgTx.scaleX,
+        scaleY: bgTx.scaleY,
+        angle: bgTx.angle,
+        skewX: bgTx.skewX,
+        skewY: bgTx.skewY,
+        flipX: bgTx.flipX,
+        flipY: bgTx.flipY,
         selectable: false,
         evented: false,
         opacity: 0.85,
       })
-
-      const clipPoints = localPolygon && localPolygon.length >= 3 ? localPolygon : localCorners
-      const clipPath = new Path(
-        clipPoints
-          .map((p, i) => (i === 0 ? `M ${p[0]} ${p[1]}` : `L ${p[0]} ${p[1]}`))
-          .join(' ') + ' Z',
-        { selectable: false, evented: false }
-      )
-      fabricImg.set({ clipPath })
       canvas.add(fabricImg)
       textureLayersRef.current[layerKey] = fabricImg
       setHasTextureLayer(true)
       canvas.requestRenderAll()
     },
-    [containerWidth, containerHeight, textureScale, getBackgroundTransform, loadInteriorMaskImage]
+    [containerWidth, containerHeight, textureScale, getBackgroundTransform, getBackgroundBounds, loadInteriorMaskImage]
   )
 
   const highlightSelectedWall = useCallback((selectedId: number | null) => {
@@ -1255,6 +1314,8 @@ export function useCanvas2D({
     canvas.requestRenderAll()
   }, [getBackgroundBounds])
 
+  const scaleDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
   const setTextureScale = useCallback((scale: number, selectedWallId: number | null) => {
     const s = Math.max(0.05, Math.min(1, scale))
     setTextureScaleState(s)
@@ -1263,12 +1324,28 @@ export function useCanvas2D({
     const layerKey = selectedWallId != null ? String(selectedWallId) : 'background'
     const layer = textureLayersRef.current[layerKey]
     if (!layer) return
+
+    // Старый путь: Rect с pattern fill (background-режим)
     const fill = (layer as unknown as { fill?: { patternTransform?: number[] } }).fill
     if (fill && Array.isArray(fill.patternTransform)) {
       fill.patternTransform = [s, 0, 0, s, 0, 0]
       canvas.requestRenderAll()
+      return
     }
-  }, [])
+
+    // FabricImage-слой (интерьер/экстерьер): дебаунс-ре-рендер через applyTextureToWall
+    if (scaleDebounceRef.current) clearTimeout(scaleDebounceRef.current)
+    scaleDebounceRef.current = setTimeout(() => {
+      const wallState = useWallStore.getState()
+      const wallId = selectedWallId
+      if (wallId == null) return
+      const wall = wallState.walls.find((w) => w.id === wallId)
+      const url = wallState.wallTextures[wallId]
+      const size = wallState.wallImageSize
+      if (!wall || !url || !size) return
+      void applyTextureToWall(url, wall.corners, size, wallId, s)
+    }, 120)
+  }, [applyTextureToWall])
 
   const clearMaskToolState = useCallback(() => {
     const canvas = canvasInstanceRef.current
