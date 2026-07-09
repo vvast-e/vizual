@@ -1,0 +1,16 @@
+.git
+node_modules
+dist
+build
+
+backend/venv
+backend/.venv
+backend/__pycache__
+
+warp-debug
+exterior-debug
+detect-debug
+test_photo
+
+*.log
+*.xlsx
