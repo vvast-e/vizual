@@ -178,6 +178,90 @@ function drawTexturedTriangle(
   ctx.restore()
 }
 
+/**
+ * Решает линейную систему A·x = b методом Гаусса с частичным выбором ведущего элемента.
+ */
+function solveLinearSystem(A: number[][], b: number[]): number[] {
+  const n = A.length
+  const M = A.map((row, i) => [...row, b[i]])
+  for (let col = 0; col < n; col++) {
+    let maxRow = col
+    for (let r = col + 1; r < n; r++) {
+      if (Math.abs(M[r][col]) > Math.abs(M[maxRow][col])) maxRow = r
+    }
+    ;[M[col], M[maxRow]] = [M[maxRow], M[col]]
+    const pivot = M[col][col]
+    if (Math.abs(pivot) < 1e-12) continue
+    for (let r = 0; r < n; r++) {
+      if (r === col) continue
+      const factor = M[r][col] / pivot
+      for (let c = col; c <= n; c++) M[r][c] -= factor * M[col][c]
+    }
+  }
+  return M.map((row, i) => row[n] / (Math.abs(row[i]) < 1e-12 ? 1e-12 : row[i]))
+}
+
+/**
+ * Вычисляет матрицу гомографии (3x3, h22 нормирован к 1) для проективного (8-параметрового)
+ * маппинга 4 точек src -> 4 точки dst. В отличие от аффинного варпа треугольников,
+ * гомография корректно передаёт схождение перспективных линий по всему четырёхугольнику.
+ */
+function computeHomography(src: [number, number][], dst: [number, number][]): number[] {
+  const A: number[][] = []
+  const B: number[] = []
+  for (let i = 0; i < 4; i++) {
+    const [x, y] = src[i]
+    const [u, v] = dst[i]
+    A.push([x, y, 1, 0, 0, 0, -x * u, -y * u])
+    B.push(u)
+    A.push([0, 0, 0, x, y, 1, -x * v, -y * v])
+    B.push(v)
+  }
+  const h = solveLinearSystem(A, B)
+  return [h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7], 1]
+}
+
+function applyHomography(h: number[], x: number, y: number): [number, number] {
+  const denom = h[6] * x + h[7] * y + h[8]
+  const safeDenom = Math.abs(denom) < 1e-9 ? 1e-9 : denom
+  return [(h[0] * x + h[1] * y + h[2]) / safeDenom, (h[3] * x + h[4] * y + h[5]) / safeDenom]
+}
+
+/**
+ * Рисует текстуру на произвольный четырёхугольник dst через настоящую перспективную
+ * гомографию, аппроксимированную субдивизией на N×N ячеек (каждая — 2 аффинных
+ * треугольника). При достаточной субдивизии неотличимо от точного perspective warp,
+ * но без нужды в попиксельной inverse-sampling выборке на CPU.
+ *
+ * @param quad — 4 угла назначения в порядке [TL, BL, BR, TR]
+ */
+function drawPerspectiveQuad(
+  ctx: CanvasRenderingContext2D,
+  src: CanvasImageSource,
+  srcW: number,
+  srcH: number,
+  quad: [number, number][],
+  subdivisions: number = 16
+): void {
+  const srcQuad: [number, number][] = [[0, 0], [0, srcH], [srcW, srcH], [srcW, 0]]
+  const H = computeHomography(srcQuad, quad)
+  const N = Math.max(1, subdivisions)
+  for (let i = 0; i < N; i++) {
+    const sx0 = (i / N) * srcW
+    const sx1 = ((i + 1) / N) * srcW
+    for (let j = 0; j < N; j++) {
+      const sy0 = (j / N) * srcH
+      const sy1 = ((j + 1) / N) * srcH
+      const [dx00, dy00] = applyHomography(H, sx0, sy0)
+      const [dx10, dy10] = applyHomography(H, sx1, sy0)
+      const [dx01, dy01] = applyHomography(H, sx0, sy1)
+      const [dx11, dy11] = applyHomography(H, sx1, sy1)
+      drawTexturedTriangle(ctx, src, sx0, sy0, sx0, sy1, sx1, sy1, dx00, dy00, dx01, dy01, dx11, dy11)
+      drawTexturedTriangle(ctx, src, sx0, sy0, sx1, sy1, sx1, sy0, dx00, dy00, dx11, dy11, dx10, dy10)
+    }
+  }
+}
+
 
 /**
  * Базовый размер тайла текстуры в пикселях при scale=1.0.
@@ -355,20 +439,10 @@ export async function renderPerspectiveWallTexture(
     ctx.closePath()
     ctx.clip()
 
-    // Рисуем quad: [TL, BL, BR, TR] — абсолютные координаты corners
-    const [tl, bl, br, tr] = corners
-    // Triangle 1: TL-BL-BR
-    drawTexturedTriangle(
-      ctx, srcCanvas,
-      0, 0,   0, bboxH,   bboxW, bboxH,
-      tl[0], tl[1],  bl[0], bl[1],  br[0], br[1]
-    )
-    // Triangle 2: TL-BR-TR
-    drawTexturedTriangle(
-      ctx, srcCanvas,
-      0, 0,   bboxW, bboxH,   bboxW, 0,
-      tl[0], tl[1],  br[0], br[1],  tr[0], tr[1]
-    )
+    // Рисуем quad: [TL, BL, BR, TR] — абсолютные координаты corners.
+    // Перспективная гомография (не аффинный варп) — корректно передаёт схождение
+    // перспективных линий на всём четырёхугольнике стены.
+    drawPerspectiveQuad(ctx, srcCanvas, bboxW, bboxH, corners)
     ctx.restore()
 
     // Маска окон/дверей: вырезаем прозрачные области
@@ -451,15 +525,9 @@ export async function renderPerspectiveWallTexture(
       }
     }
   } else {
-    // Стены/тайл: стандартные 2 треугольника (полный quad)
-    // Triangle 1: TL-BL-BR
-    drawTexturedTriangle(ctx, srcCanvas,
-      0, 0,     0, bboxH,    bboxW, bboxH,
-      tl[0], tl[1],  bl[0], bl[1],  br[0], br[1])
-    // Triangle 2: TL-BR-TR
-    drawTexturedTriangle(ctx, srcCanvas,
-      0, 0,     bboxW, bboxH,    bboxW, 0,
-      tl[0], tl[1],  br[0], br[1],  tr[0], tr[1])
+    // Стены/тайл: перспективная гомография вместо 2 аффинных треугольников
+    // (устраняет диагональный залом при сильно скошенной стене)
+    drawPerspectiveQuad(ctx, srcCanvas, bboxW, bboxH, localCorners)
   }
 
   // Mask: carve openings (windows/doors) out of the rendered texture.

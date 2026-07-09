@@ -1099,6 +1099,47 @@ async def _build_interior_wall_minus_holes(image_bytes: bytes, walls_result: dic
 
     wall_minus_holes = cv2.bitwise_and(wall_union, cv2.bitwise_not(holes_dilated))
 
+    # ── Пер-стеновая геометрия: polygon (сглаженный контур с вырезанными
+    # краевыми проёмами) + скорректированные corners через _corners_from_polygon_auto.
+    # Best-effort: при ошибке/вырожденном контуре стена остаётся с исходными corners.
+    for wall in walls:
+        try:
+            surface = wall.get("surface", "wall")
+            base_pts = np.array(wall.get("corners") or [], dtype=np.int32)
+            if base_pts.size < 6:
+                continue
+            wall_fill = np.zeros((height, width), dtype=np.uint8)
+            cv2.fillPoly(wall_fill, [base_pts], color=255)
+            # Для стен вычитаем проёмы; потолок оставляем целым (балки/шум нормалей
+            # не должны прорезать контур потолка).
+            region = (
+                cv2.bitwise_and(wall_fill, wall_minus_holes)
+                if surface != "ceiling"
+                else wall_fill
+            )
+            contours, _ = cv2.findContours(region, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            if not contours:
+                continue
+            contour = max(contours, key=cv2.contourArea)
+            area = cv2.contourArea(contour)
+            if area < (width * height) / 200:
+                continue
+            perimeter = cv2.arcLength(contour, True)
+            approx = cv2.approxPolyDP(contour, 0.01 * perimeter, True)
+            poly_pts = approx.reshape(-1, 2)
+            if len(poly_pts) < 3:
+                continue
+            wall["polygon"] = [[int(p[0]), int(p[1])] for p in poly_pts]
+
+            quad = _corners_from_polygon_auto(poly_pts)  # [TL, TR, BR, BL]
+            # Ремап под порядок фронта [TL, BL, BR, TR]
+            remapped = [quad[0], quad[3], quad[2], quad[1]]
+            wall["corners"] = [[int(p[0]), int(p[1])] for p in remapped]
+            center = wall_polygon_centroid(poly_pts.tolist())
+            wall["center"] = [round(float(center[0]), 2), round(float(center[1]), 2)]
+        except Exception as _geo_err:
+            print(f"[detect-debug] per-wall geometry refine failed for wall {wall.get('id')}: {_geo_err}")
+
     # ── Debug-вывод по подпапкам (как в exterior-debug) ─────────────────────
     if DETECT_DEBUG_SAVE:
         try:
@@ -1128,6 +1169,19 @@ async def _build_interior_wall_minus_holes(image_bytes: bytes, walls_result: dic
                 _save("seg_raw.png", seg_vis)
 
             _save("wall_minus_holes.png", wall_minus_holes)
+
+            # Пер-стеновые polygon (сглаженный контур, вырезанные проёмы) поверх фото
+            polys_vis = cv2.imdecode(np.frombuffer(image_bytes, np.uint8), cv2.IMREAD_COLOR)
+            if polys_vis is not None:
+                for wall in walls:
+                    poly = wall.get("polygon")
+                    if not poly or len(poly) < 3:
+                        continue
+                    pts = np.array(poly, dtype=np.int32)
+                    surface = wall.get("surface", "wall")
+                    color = (0, 165, 255) if surface == "ceiling" else (255, 0, 255)
+                    cv2.polylines(polys_vis, [pts], isClosed=True, color=color, thickness=2)
+                _save("wall_polys.png", polys_vis)
 
             # Overlay: стены/потолок + консолидированные контуры проёмов
             overlay = cv2.imdecode(np.frombuffer(image_bytes, np.uint8), cv2.IMREAD_COLOR)
